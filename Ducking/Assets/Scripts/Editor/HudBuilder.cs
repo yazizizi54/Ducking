@@ -99,14 +99,31 @@ namespace DuckKing.EditorTools
             var panelImg = settingsPanel.GetComponent<Image>();
             panelImg.color = new Color(0.12f, 0.14f, 0.20f, 0.98f);
 
-            AnchorCenter(settingsPanel.GetComponent<RectTransform>(), new Vector2(520f, 340f));
+            AnchorCenter(settingsPanel.GetComponent<RectTransform>(), new Vector2(560f, 560f));
 
-            var panelTitle = CreateText(settingsPanel.transform, "Title", "SETTINGS", 36,
+            var panelTitle = CreateText(settingsPanel.transform, "Title", "设置", 40,
                 new Color(1f, 0.85f, 0.30f), TextAnchor.MiddleCenter);
-            AnchorCenter(panelTitle.rectTransform, new Vector2(460f, 56f), new Vector2(0f, 120f));
+            AnchorCenter(panelTitle.rectTransform, new Vector2(500f, 60f), new Vector2(0f, 230f));
 
-            var resumeBtn = CreateButton(settingsPanel.transform, "ResumeButton", "RESUME", new Vector2(0f, -20f));
-            var menuBtnTop = CreateButton(settingsPanel.transform, "MenuButton", "QUIT TO MENU", new Vector2(0f, -100f));
+            // --- Audio rows, matching the title screen ---
+            var musicSlider = CreateSliderRow(settingsPanel.transform, "MusicRow", "音乐", 130f,
+                out var musicValue);
+            var sfxSlider = CreateSliderRow(settingsPanel.transform, "SfxRow", "音效", 50f,
+                out var sfxValue);
+
+            var audioSettings = settingsPanel.AddComponent<DuckKing.UI.AudioSettings>();
+            var audioSo = new SerializedObject(audioSettings);
+            audioSo.FindProperty("musicSlider").objectReferenceValue = musicSlider;
+            audioSo.FindProperty("sfxSlider").objectReferenceValue = sfxSlider;
+            audioSo.FindProperty("musicValueText").objectReferenceValue = musicValue;
+            audioSo.FindProperty("sfxValueText").objectReferenceValue = sfxValue;
+            audioSo.ApplyModifiedPropertiesWithoutUndo();
+
+            // --- Buttons: resume and back to the title screen ---
+            var resumeBtn = CreateButton(settingsPanel.transform, "ResumeButton", "继续游戏",
+                new Vector2(0f, -100f));
+            var menuBtnTop = CreateButton(settingsPanel.transform, "MenuButton", "返回主菜单",
+                new Vector2(0f, -190f));
 
             settingsPanel.SetActive(false);
 
@@ -198,6 +215,74 @@ namespace DuckKing.EditorTools
             text.raycastTarget = false;
 
             return text;
+        }
+
+        /// <summary>
+        /// Builds one "label - slider - percent" row and returns its slider.
+        /// The row is a fixed-height strip anchored to the panel centre.
+        /// </summary>
+        private static Slider CreateSliderRow(Transform parent, string name, string label,
+            float y, out Text valueText)
+        {
+            var row = new GameObject(name, typeof(RectTransform));
+            row.transform.SetParent(parent, false);
+            AnchorCenter(row.GetComponent<RectTransform>(), new Vector2(480f, 56f), new Vector2(0f, y));
+
+            var caption = CreateText(row.transform, "Label", label, 30, Color.white, TextAnchor.MiddleLeft);
+            var captionRect = caption.rectTransform;
+            captionRect.anchorMin = new Vector2(0f, 0f);
+            captionRect.anchorMax = new Vector2(0f, 1f);
+            captionRect.pivot = new Vector2(0f, 0.5f);
+            captionRect.anchoredPosition = Vector2.zero;
+            captionRect.sizeDelta = new Vector2(90f, 0f);
+
+            var sliderGo = new GameObject("Slider", typeof(RectTransform), typeof(Slider));
+            sliderGo.transform.SetParent(row.transform, false);
+
+            var sliderRect = sliderGo.GetComponent<RectTransform>();
+            sliderRect.anchorMin = new Vector2(0f, 0.5f);
+            sliderRect.anchorMax = new Vector2(0f, 0.5f);
+            sliderRect.pivot = new Vector2(0f, 0.5f);
+            sliderRect.anchoredPosition = new Vector2(110f, 0f);
+            sliderRect.sizeDelta = new Vector2(290f, 24f);
+
+            // A Slider with no fill/target graphic still drags, but shows nothing.
+            var background = CreateImage(sliderGo.transform, "Background", new Color(0.30f, 0.33f, 0.40f, 1f));
+            Stretch(background.rectTransform);
+
+            var fillArea = new GameObject("Fill Area", typeof(RectTransform));
+            fillArea.transform.SetParent(sliderGo.transform, false);
+            var fillAreaRect = fillArea.GetComponent<RectTransform>();
+            fillAreaRect.anchorMin = new Vector2(0f, 0f);
+            fillAreaRect.anchorMax = new Vector2(1f, 1f);
+            fillAreaRect.offsetMin = Vector2.zero;
+            fillAreaRect.offsetMax = Vector2.zero;
+
+            var fill = CreateImage(fillArea.transform, "Fill", new Color(0.98f, 0.78f, 0.24f, 1f));
+            var fillRect = fill.rectTransform;
+            fillRect.anchorMin = Vector2.zero;
+            fillRect.anchorMax = new Vector2(1f, 1f);
+            fillRect.offsetMin = Vector2.zero;
+            fillRect.offsetMax = Vector2.zero;
+
+            var slider = sliderGo.GetComponent<Slider>();
+            slider.direction = Slider.Direction.LeftToRight;
+            slider.minValue = 0f;
+            slider.maxValue = 1f;
+            slider.targetGraphic = background;
+            slider.fillRect = fillRect;
+            slider.handleRect = null;
+
+            valueText = CreateText(row.transform, "Value", "100%", 26,
+                new Color(0.85f, 0.86f, 0.92f), TextAnchor.MiddleRight);
+            var valueRect = valueText.rectTransform;
+            valueRect.anchorMin = new Vector2(1f, 0f);
+            valueRect.anchorMax = new Vector2(1f, 1f);
+            valueRect.pivot = new Vector2(1f, 0.5f);
+            valueRect.anchoredPosition = Vector2.zero;
+            valueRect.sizeDelta = new Vector2(80f, 0f);
+
+            return slider;
         }
 
         private static Button CreateButton(Transform parent, string name, string label, Vector2 pos,

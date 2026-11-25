@@ -38,7 +38,8 @@ namespace DuckKing.UI
         [SerializeField] private string waitingMessage = "PRESS ANY KEY TO START";
 
         [Header("Behaviour")]
-        [Tooltip("Pause the game while the settings panel is open")]
+        [Tooltip("Freeze the game while the settings panel is open. The run clock keeps " +
+                 "counting regardless, because the panel should cost time.")]
         [SerializeField] private bool pauseWhileSettingsOpen = true;
         [Tooltip("Start hidden; useful when the settings panel is built in the scene")]
         [SerializeField] private bool hideSettingsOnStart = true;
@@ -185,16 +186,9 @@ namespace DuckKing.UI
                 }
             }
 
-            // The HUD itself must keep updating while paused, and the timer has to
-            // stop with the game, so tell the manager rather than relying on timeScale.
-            _localRunning = !visible;
-
-            var gm = SceneGameManager.Instance;
-            if (gm != null)
-            {
-                if (visible) gm.PauseTimer();
-                else gm.StartTimer();
-            }
+            // The clock deliberately keeps running while the panel is open: reading the
+            // settings screen should cost the player time, not freeze the run for free.
+            // Nothing is paused here; the manager clock only stops when the run ends.
         }
 
         public bool IsSettingsOpen => _settingsOpen;
