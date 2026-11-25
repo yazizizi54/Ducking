@@ -1,0 +1,644 @@
+using System.Collections.Generic;
+using DuckKing.Player;
+using UnityEngine;
+
+namespace DuckKing.Gameplay
+{
+    /// <summary>
+    /// A see-saw plank that pivots on a fixed fulcrum, like the balance beams in
+    /// Fireboy and Watergirl.
+    ///
+    /// Why this does not use HingeJoint2D:
+    ///
+    /// The ducks set Rigidbody2D.velocity at the top of every physics step, which
+    /// snaps their velocity back to whatever DuckController wants. Anything the
+    /// engine or the plank did to them afterwards is discarded next step. A hinged
+    /// plank is a constraint solver: every step it reports a contact normal, the
+    /// duck gets pushed away, the duck's controller snaps it back, and the pair
+    /// never settle. That reads as permanent jitter.
+    ///
+    /// So the plank is driven here. Every step it looks for riders, decides the angle
+    /// it should rest at, turns itself, and then lifts each rider onto its surface.
+    ///
+    /// What this script deliberately does NOT do:
+    ///  - it never writes to a rider's horizontal velocity while the plank is walkable,
+    ///    because DuckController owns that axis and the two used to cancel each other
+    ///  - it never depends on update order, collider contact events, or how many
+    ///    colliders a duck happens to carry
+    /// </summary>
+    public class BalanceBeam : MonoBehaviour
+    {
+        [Header("Shape")]
+        [Tooltip("Half the plank length, in world units")]
+        [SerializeField] private float halfLength = 1.5f;
+
+        [Tooltip("How far above the plank's middle line a duck's feet stand")]
+        [SerializeField] private float surfaceOffset = 0.11f;
+
+        [Tooltip("Plank thickness. Used to decide whether a collider is resting on it.")]
+        [SerializeField] private float plankThickness = 0.22f;
+
+        [Header("Tilt")]
+        [Tooltip("Steepest the plank may tilt, in degrees away from level")]
+        [Range(0f, 89f)]
+        [SerializeField] private float maxAngle = 20f;
+
+        [Tooltip("How far off centre a single rider has to stand to tip the plank to its " +
+                 "limit. Expressed as a fraction of the half length.")]
+        [Range(0.2f, 1f)]
+        [SerializeField] private float tipThreshold = 0.5f;
+
+        [Header("Sliding")]
+        [Tooltip("Tilt that still counts as walkable. Past this the surface is too steep " +
+                 "and a rider starts to slide. Set to 0 to switch sliding off.")]
+        [Range(0f, 45f)]
+        [SerializeField] private float slideStartAngle = 12f;
+
+        [Tooltip("How fast a rider slides once the plank is steeper than the walkable angle")]
+        [SerializeField] private float slideAcceleration = 14f;
+
+        [Tooltip("Fastest a rider can slide, in units per second")]
+        [SerializeField] private float slideMaxSpeed = 5f;
+
+        [Header("Inertia")]
+        [Tooltip("How hard the plank is pulled toward its balance angle. Higher is snappier " +
+                 "and lighter; lower makes the plank feel heavy and slow to respond.")]
+        [SerializeField] private float tiltSpring = 260f;
+
+        [Tooltip("How quickly the plank's rotation settles. Low values make it swing and " +
+                 "oscillate like real wood; high values make it feel damped and mechanical.")]
+        [SerializeField] private float tiltDamping = 34f;
+
+        [Tooltip("Extra damping while a rider is on the plank. Smooths out the jitter a " +
+                 "walking duck feeds into the tilt.")]
+        [SerializeField] private float riderDamping = 22f;
+
+        [Tooltip("How quickly the plank reacts to a moving load. Lower values ignore " +
+                 "physics noise, higher values track the duck more tightly.")]
+        [SerializeField] private float loadSmoothing = 12f;
+
+        [Tooltip("Load movement smaller than this is ignored outright, in world units. " +
+                 "Keeps a standing duck's position noise from ever reaching the angle.")]
+        [SerializeField] private float loadDeadZone = 0.004f;
+
+        [Header("Riders")]
+        [Tooltip("Scale a duck's effect on the tilt. Two ducks that should cancel each " +
+                 "other out need equal values here.")]
+        [Range(0.1f, 5f)]
+        [SerializeField] private float duckWeight = 1f;
+
+        [Tooltip("Weight of a PushableCrate resting on the plank")]
+        [Range(0.1f, 5f)]
+        [SerializeField] private float crateWeight = 1.6f;
+
+        [Header("Debug")]
+        [Tooltip("Draw the plank line in the scene view, even when not selected")]
+        [SerializeField] private bool showGizmo = true;
+
+        [Tooltip("Log the tilt, the load position and how many riders are on the plank")]
+        [SerializeField] private bool debugLog;
+
+        private readonly List<Rider> _riders = new List<Rider>(4);
+
+        /// <summary>Scratch list reused by the crate overlap query; avoids per-step garbage.</summary>
+        private List<Collider2D> _candidateCrates;
+
+        /// <summary>Scratch array reused when gathering ducks; avoids per-step garbage.</summary>
+        private DuckController[] _duckBuffer;
+
+        /// <summary>Filters the crate query down to colliders that actually have a body.</summary>
+        private ContactFilter2D _candidateFilter;
+
+        /// <summary>Slide speed per rider, keyed by rigid body instance id.</summary>
+        private readonly Dictionary<int, float> _slip = new Dictionary<int, float>();
+
+        private float _angle;
+
+        /// <summary>Angular speed of the tilt, in degrees per second. Gives the plank weight.</summary>
+        private float _angularVelocity;
+
+        /// <summary>Low-pass filtered load position. Physics noise is removed here.</summary>
+        private float _smoothedLoadX;
+
+        /// <summary>False until the plank has seen at least one load, so the filter can be seeded.</summary>
+        private bool _hasLoad;
+
+        private float _lastLoadX;
+
+        /// <summary>Raw weighted mean before the low-pass filter. Diagnostics only.</summary>
+        private float _lastRawMeanX;
+
+        /// <summary>Counts physics steps so a log line can be matched to a step.</summary>
+        private int _stepCounter;
+
+        private float _lastBalanceX;
+
+        /// <summary>Current tilt in degrees; positive means the right end is down.</summary>
+        public float Angle => _angle;
+
+        /// <summary>True when the plank is close enough to level to stand on safely.</summary>
+        public bool IsLevel => Mathf.Abs(_angle) < 2f;
+
+        /// <summary>Plank length in world units.</summary>
+        public float Length => halfLength * 2f;
+
+        /// <summary>How many ducks and crates are currently resting on the plank.</summary>
+        public int RiderCount => _riders.Count;
+
+        /// <summary>
+        /// Bodies that counted as attached on the previous step.
+        ///
+        /// The rider list is rebuilt from scratch every step, so it cannot answer "was
+        /// this body on the plank a moment ago". Without that history the attach and
+        /// release thresholds would always be evaluated as a fresh attach, and the
+        /// hysteresis would do nothing.
+        /// </summary>
+        private readonly HashSet<int> _attachedIds = new HashSet<int>();
+
+        private readonly HashSet<int> _attachedIdsNow = new HashSet<int>();
+
+        private struct Rider
+        {
+            public Rigidbody2D Body;
+            public Collider2D Collider;
+            public float Weight;
+            public float X;
+
+            /// <summary>
+            /// True once the rider is committed to standing on the plank. The commit
+            /// uses a tighter threshold than the release, so a rider hovering right at
+            /// the boundary cannot flip in and out of the list every step.
+            /// </summary>
+            public bool Attached;
+        }
+
+        private void Start()
+        {
+            // Rigid bodies are required for the crate query to return anything, and
+            // triggers are ignored so the query never picks up the plank itself.
+            _candidateFilter = new ContactFilter2D
+            {
+                useTriggers = false,
+                useLayerMask = false
+            };
+
+            // A hand-made plank often ends up without a collider, which then looks
+            // like "the beam ignores me" instead of throwing an error.
+            if (GetComponent<Collider2D>() == null)
+            {
+                var col = gameObject.AddComponent<BoxCollider2D>();
+                col.size = new Vector2(halfLength * 2f, Mathf.Max(plankThickness, 0.1f));
+                Debug.LogWarning($"[BalanceBeam] {name} had no Collider2D; added a BoxCollider2D. " +
+                                 "Tune its Size to match the sprite.", this);
+            }
+
+            // Any leftover rigid body would fight the script over who owns the angle.
+            var leftover = GetComponent<Rigidbody2D>();
+            if (leftover != null)
+            {
+                leftover.bodyType = RigidbodyType2D.Kinematic;
+                leftover.simulated = false;
+                Debug.LogWarning($"[BalanceBeam] {name} had a Rigidbody2D; disabled its simulation. " +
+                                 "Remove the Rigidbody2D and the HingeJoint2D, they are not used.", this);
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            _stepCounter++;
+
+            _riders.Clear();
+            _attachedIdsNow.Clear();
+            CollectRiders();
+
+            _lastLoadX = 0f;
+            float balanceAngle = ComputeBalanceAngle();
+
+            // The tilt is integrated as a damped spring rather than snapped toward the
+            // goal with MoveTowards. MoveTowards teleported the angle to the target in a
+            // single step, so the plank had no inertia: every jitter in the rider's
+            // position appeared instantly in the rotation, and the correction fed back
+            // into the next frame's position estimate. A spring makes the plank behave
+            // like something with weight, which is what the reference game does.
+            float goal = Mathf.Clamp(balanceAngle, -maxAngle, maxAngle);
+            float damping = tiltDamping + (_riders.Count > 0 ? riderDamping : 0f);
+
+            float accel = (goal - _angle) * tiltSpring - _angularVelocity * damping;
+            _angularVelocity += accel * Time.fixedDeltaTime;
+            _angle += _angularVelocity * Time.fixedDeltaTime;
+
+            // Clamp the angle and kill the velocity running into the limit, otherwise the
+            // spring keeps pushing against the stop and the plank buzzes at maxAngle.
+            if (_angle > maxAngle)
+            {
+                _angle = maxAngle;
+                if (_angularVelocity > 0f) _angularVelocity = 0f;
+            }
+            else if (_angle < -maxAngle)
+            {
+                _angle = -maxAngle;
+                if (_angularVelocity < 0f) _angularVelocity = 0f;
+            }
+
+            // Settle into a dead band. A damped spring never truly reaches its target: it
+            // keeps producing sub-degree motion forever, and the plank is a pixel-art
+            // sprite under a Pixel Perfect Camera, so even a 0.05 degree wobble can cross
+            // a pixel boundary and show up as the plank flicking between two positions.
+            // At the plank's ends the same angle error moves the tip much further, which
+            // is why the buzzing was worst there. Once the plank is this close to its goal
+            // and barely moving, stop it outright.
+            const float settleAngle = 0.06f;
+            const float settleSpeed = 0.6f;
+            if (Mathf.Abs(goal - _angle) <= settleAngle && Mathf.Abs(_angularVelocity) <= settleSpeed)
+            {
+                _angle = goal;
+                _angularVelocity = 0f;
+            }
+
+            ApplyTilt();
+            CarryRiders();
+            ForgetDroppedRiders();
+
+            // Publish this step's attachments as the baseline for the next step.
+            _attachedIds.Clear();
+            foreach (int id in _attachedIdsNow) _attachedIds.Add(id);
+
+            if (debugLog && _riders.Count > 0)
+            {
+                Debug.Log($"[BB#{_stepCounter}] riders={_riders.Count} loadX={_lastLoadX:F4} " +
+                          $"balanceX={_lastBalanceX:F3} angle={_angle:F4} goal={goal:F4} " +
+                          $"angVel={_angularVelocity:F3} rotZ={transform.eulerAngles.z:F3} " +
+                          $"halfLen={halfLength:F2} maxAngle={maxAngle:F1}",
+                          this);
+            }
+        }
+
+        private void OnDrawGizmos()
+        {
+            if (!showGizmo) return;
+
+            Vector3 center = transform.position;
+            Vector3 axis = Quaternion.Euler(0f, 0f, -_angle) * Vector3.right;
+
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawLine(center - axis * halfLength, center + axis * halfLength);
+            Gizmos.DrawWireSphere(center, 0.06f);
+        }
+
+        /// <summary>
+        /// Collects every duck and crate resting on the plank.
+        ///
+        /// The search box is deliberately generous: it matters that a rider is never
+        /// missed, not that the box is tight.
+        /// </summary>
+        private void CollectRiders()
+        {
+            float angleRad = _angle * Mathf.Deg2Rad;
+            Vector2 axis = new Vector2(Mathf.Cos(angleRad), Mathf.Sin(angleRad));
+
+            // Candidates are looked up from the physics scene rather than cast for with
+            // a BoxCast. The old thin-slice overlap missed the duck for a single frame
+            // whenever its feet drifted a hair outside the slice, and a single missed
+            // frame means nobody corrects the duck's Y that step, so it visibly hitched.
+            CollectFromDucks();
+
+            if (_candidateCrates == null) _candidateCrates = new List<Collider2D>(4);
+            _candidateCrates.Clear();
+            Physics2D.OverlapBox(
+                (Vector2)transform.position + Perpendicular(axis) * surfaceOffset,
+                new Vector2(halfLength * 2f + 1f, 1.2f),
+                -_angle,
+                _candidateFilter,
+                _candidateCrates);
+
+            for (int i = 0; i < _candidateCrates.Count; i++)
+            {
+                Collider2D col = _candidateCrates[i];
+                if (col == null || col.transform == transform) continue;
+                if (col.GetComponent<PushableCrate>() == null) continue;
+                AddRider(col, crateWeight);
+            }
+        }
+
+        /// <summary>
+        /// Registers every duck whose collider is close enough to count as standing on
+        /// the plank. Ducks are found through <see cref="DuckController"/> rather than
+        /// through a physics query so a frame can never miss one.
+        /// </summary>
+        private void CollectFromDucks()
+        {
+            if (_duckBuffer == null) _duckBuffer = new DuckController[4];
+
+            int found = 0;
+            for (int i = 0; i < _duckBuffer.Length; i++)
+            {
+                if (_duckBuffer[i] == null) continue;
+                _duckBuffer[found++] = _duckBuffer[i];
+            }
+
+            for (int i = found; i < _duckBuffer.Length; i++) _duckBuffer[i] = null;
+
+            // GetComponentsInChildren with an includeInactive flag is not used here: a
+            // disabled duck should not weigh the plank down.
+            DuckController[] all = FindObjectsOfType<DuckController>();
+            if (all.Length > _duckBuffer.Length)
+            {
+                var grown = new DuckController[all.Length];
+                for (int i = 0; i < _duckBuffer.Length; i++) grown[i] = _duckBuffer[i];
+                _duckBuffer = grown;
+            }
+
+            for (int i = 0; i < all.Length; i++)
+            {
+                DuckController duck = all[i];
+                if (duck == null || !duck.isActiveAndEnabled) continue;
+
+                Collider2D col = duck.GetComponent<Collider2D>();
+                if (col == null) continue;
+                AddRider(col, duckWeight);
+            }
+        }
+
+        /// <summary>Adds a collider to the rider list if it is standing on the plank.</summary>
+        private void AddRider(Collider2D col, float weight)
+        {
+            if (col == null || weight <= 0f) return;
+            if (col.transform == transform) return;
+
+            Rigidbody2D body = col.attachedRigidbody;
+            if (body == null) return;
+
+            // A body with several colliders must only count once.
+            for (int i = 0; i < _riders.Count; i++)
+            {
+                if (_riders[i].Body == body) return;
+            }
+
+            // Ask with the looser release threshold when the body was attached on the
+            // previous step, so hovering at the boundary cannot flip it in and out.
+            bool wasAttached = IsAttached(body);
+            if (!TryGetRiderX(col, wasAttached, out float riderX)) return;
+
+            _riders.Add(new Rider
+            {
+                Body = body,
+                Collider = col,
+                Weight = weight,
+                X = riderX,
+                Attached = true
+            });
+
+            _attachedIdsNow.Add(body.GetInstanceID());
+        }
+
+        /// <summary>
+        /// Works out where along the plank a collider is standing.
+        ///
+        /// The duck's feet are approximated by the bottom of its collider, but the
+        /// height is measured from the collider centre projected onto the plank rather
+        /// than from the raw bounds corner. On a tilted plank the axis-aligned bounding
+        /// box puts its lowest point at a corner, which drifts with the angle and made
+        /// the reported position oscillate right where the load passes the pivot.
+        ///
+        /// A rider already on the plank is released with a looser threshold than the one
+        /// used to attach it. A single threshold made the duck drop off and re-attach on
+        /// alternating steps whenever it hovered at the boundary, which showed up as a
+        /// constant buzz.
+        /// </summary>
+        private bool TryGetRiderX(Collider2D col, bool alreadyAttached, out float riderX)
+        {
+            riderX = 0f;
+
+            Bounds b = col.bounds;
+            float angleRad = _angle * Mathf.Deg2Rad;
+            Vector2 axis = new Vector2(Mathf.Cos(angleRad), Mathf.Sin(angleRad));
+            Vector2 normal = Perpendicular(axis);
+
+            Vector2 toCenter = (Vector2)b.center - (Vector2)transform.position;
+
+            // How high the feet sit above the plank line, measured along the normal.
+            float across = Vector2.Dot(toCenter, normal) - b.extents.y;
+
+            // Attaching needs the feet right on the surface; staying attached tolerates a
+            // wider gap so a small bounce does not kick the duck off.
+            float upper = alreadyAttached ? plankThickness + 0.6f : plankThickness + 0.25f;
+            if (across < -0.10f) return false;
+            if (across > upper) return false;
+
+            float along = Vector2.Dot(toCenter, axis);
+            if (along < -halfLength - 0.15f || along > halfLength + 0.15f) return false;
+
+            riderX = Mathf.Clamp(along, -halfLength, halfLength);
+            return true;
+        }
+
+        /// <summary>
+        /// True when a body was standing on the plank on the previous step. Reads the
+        /// snapshot, not the live list, because the live list is rebuilt every step.
+        /// </summary>
+        private bool IsAttached(Rigidbody2D body)
+        {
+            return body != null && _attachedIds.Contains(body.GetInstanceID());
+        }
+
+        /// <summary>
+        /// The angle the plank should rest at, from the weighted mean position of
+        /// everything standing on it.
+        ///
+        /// A load over the pivot keeps the plank level; the further off centre it
+        /// stands, the more the plank leans, reaching the limit at tipThreshold of
+        /// the half length. Two riders at opposite ends cancel out.
+        /// </summary>
+        private float ComputeBalanceAngle()
+        {
+            if (_riders.Count == 0)
+            {
+                _lastBalanceX = 0f;
+                _hasLoad = false;
+                _smoothedLoadX = 0f;
+                return 0f;
+            }
+
+            float totalWeight = 0f;
+            float weightedX = 0f;
+
+            for (int i = 0; i < _riders.Count; i++)
+            {
+                totalWeight += _riders[i].Weight;
+                weightedX += _riders[i].X * _riders[i].Weight;
+            }
+
+            if (totalWeight <= 0f) return 0f;
+
+            float meanX = weightedX / totalWeight;
+
+            // Smooth the load position before it drives the angle. Physics leaves ducks
+            // with sub-millimetre position noise even when they stand still, and that
+            // noise was going straight into the target angle. On a pixel-art plank a
+            // fraction of a degree is enough to snap the sprite to a different pixel, so
+            // the plank appeared to flicker. Blending toward the new reading damps the
+            // noise while still tracking a duck that actually walks.
+            float blend = 1f - Mathf.Exp(-loadSmoothing * Time.fixedDeltaTime);
+            _smoothedLoadX = _hasLoad ? Mathf.Lerp(_smoothedLoadX, meanX, blend) : meanX;
+            _hasLoad = true;
+
+            // Snap to the raw value once the difference is below what the eye can see,
+            // otherwise the filtered value creeps forever and never actually settles.
+            if (Mathf.Abs(meanX - _smoothedLoadX) < loadDeadZone) _smoothedLoadX = meanX;
+
+            meanX = _smoothedLoadX;
+            _lastRawMeanX = weightedX / totalWeight;
+            _lastLoadX = meanX;
+
+            float balanceX = meanX / Mathf.Max(0.01f, tipThreshold * halfLength);
+            balanceX = Mathf.Clamp(balanceX, -1f, 1f);
+            _lastBalanceX = balanceX;
+
+            // Positive angle turns the right end down, and a load on the right has to
+            // push the right end down.
+            return balanceX * maxAngle;
+        }
+
+        private static Vector2 Perpendicular(Vector2 axis)
+        {
+            return new Vector2(-axis.y, axis.x);
+        }
+
+        private void ApplyTilt()
+        {
+            // Negative Z spins the right end down.
+            transform.rotation = Quaternion.Euler(0f, 0f, -_angle);
+        }
+
+        /// <summary>
+        /// Lifts each rider onto the plank surface, and starts it sliding once the
+        /// plank is too steep to stand on.
+        ///
+        /// Only the vertical axis is corrected. DuckController writes horizontal
+        /// velocity every step, so touching X here would simply be overwritten from
+        /// inside the duck, and the two would cancel each other out.
+        /// </summary>
+        private void CarryRiders()
+        {
+            if (_riders.Count == 0) return;
+
+            // Small correction only. A rider further off the surface has walked or
+            // jumped off, and snapping it back would look like teleporting.
+            const float maxCorrection = 0.12f;
+
+            float angleRad = _angle * Mathf.Deg2Rad;
+            Vector2 axis = new Vector2(Mathf.Cos(angleRad), Mathf.Sin(angleRad));
+            Vector2 normal = Perpendicular(axis);
+
+            for (int i = 0; i < _riders.Count; i++)
+            {
+                Rider rider = _riders[i];
+                if (rider.Body == null || rider.Collider == null) continue;
+
+                // Distance from the plank surface to the bottom of the rider, measured
+                // along the surface normal. bounds.min.y was used here before, but that is
+                // the lowest point of an axis-aligned box: on a tilted plank it is a
+                // corner, and it swings up and down as the angle changes even when the
+                // duck stands still. That fed a fake error into every frame's correction.
+                Bounds b = rider.Collider.bounds;
+                Vector2 toCenter = (Vector2)b.center - (Vector2)transform.position;
+                float feetOffset = Vector2.Dot(toCenter, normal) - b.extents.y;
+                float gap = surfaceOffset - feetOffset;
+
+                if (gap > maxCorrection || gap < -maxCorrection) continue;
+
+                // Nudge the rider vertically to sit on the surface. MovePosition must not
+                // be used here: it tells the physics step to place the body at an exact
+                // position, which discards whatever movement DuckController's velocity
+                // would have produced that step. The duck kept its speed every frame and
+                // was pulled back to the same X every frame, so it could not walk.
+                // Feeding the correction through velocity leaves the horizontal axis
+                // completely untouched.
+                //
+                // The correction is capped and eased by proximity so it fades out as the
+                // rider lifts off. A full-size correction on the last frame before the
+                // duck leaves the plank would launch it upward.
+                if (Mathf.Abs(gap) > 0.0005f && rider.Body.bodyType == RigidbodyType2D.Dynamic)
+                {
+                    float eased = gap * Mathf.Clamp01(1f - Mathf.Abs(gap) / maxCorrection);
+                    eased = Mathf.Clamp(eased, -0.05f, 0.05f);
+
+                    float vy = rider.Body.velocity.y + eased / Time.fixedDeltaTime;
+                    rider.Body.velocity = new Vector2(rider.Body.velocity.x, vy);
+                }
+
+                if (rider.Body.bodyType == RigidbodyType2D.Dynamic)
+                {
+                    // Push the rider down the slope when it is too steep to stand on.
+                    // The plank itself never moves a rider horizontally.
+                    ApplySlide(rider, axis);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pushes a rider along the plank toward the low end once the plank is steeper
+        /// than slideStartAngle.
+        ///
+        /// The physics engine cannot see a slope here: the duck's box collider is
+        /// perfectly square (edge radius 0) and the plank is a fresh trigger contact
+        /// every step, so the solver only ever sees a vertical staircase with nothing
+        /// to slide along. Sliding has to be done by hand.
+        /// </summary>
+        private void ApplySlide(Rider rider, Vector2 plankAxis)
+        {
+            int id = rider.Body.GetInstanceID();
+
+            float slope = Mathf.Abs(_angle);
+
+            if (slideStartAngle <= 0f || slope <= slideStartAngle)
+            {
+                _slip.Remove(id);
+                return;
+            }
+
+            float overshoot = Mathf.Clamp01((slope - slideStartAngle) / 8f);
+            _slip.TryGetValue(id, out float speed);
+            speed = Mathf.MoveTowards(speed, slideMaxSpeed, slideAcceleration * overshoot * Time.fixedDeltaTime);
+            _slip[id] = speed;
+
+            // Positive angle means the right end is down, so riders fall toward +X,
+            // which is the positive direction along the plank axis.
+            float direction = Mathf.Sign(_angle);
+            Vector2 v = rider.Body.velocity;
+
+            // Only push along the slide direction, never against a jump or a deliberate
+            // walk back up the slope.
+            float along = v.x * plankAxis.x;
+            if (along * direction < speed)
+            {
+                rider.Body.velocity = new Vector2(direction * speed * plankAxis.x, v.y);
+            }
+        }
+
+        /// <summary>Drops slip speed for anything that is no longer on the plank.</summary>
+        private void ForgetDroppedRiders()
+        {
+            if (_slip.Count == 0) return;
+
+            var stale = new List<int>();
+
+            foreach (var pair in _slip)
+            {
+                bool found = false;
+                for (int i = 0; i < _riders.Count; i++)
+                {
+                    if (_riders[i].Body != null && _riders[i].Body.GetInstanceID() == pair.Key)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found) stale.Add(pair.Key);
+            }
+
+            for (int i = 0; i < stale.Count; i++) _slip.Remove(stale[i]);
+        }
+    }
+}

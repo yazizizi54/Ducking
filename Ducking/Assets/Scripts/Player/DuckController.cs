@@ -31,12 +31,14 @@ namespace DuckKing.Player
         [Tooltip("提前松开跳跃键时，上升速度瞬间衰减的比例")]
         [Range(0f, 1f)]
         [SerializeField] private float jumpCutMultiplier = 0.45f;
+        [Tooltip("起跳后多少秒内松开跳跃键才算短跳，超过这个时间就不再看按键")]
+        [SerializeField] private float jumpCutWindow = 0.12f;
 
         [Header("手感辅助")]
         [Tooltip("土狼时间：离开平台后仍可起跳的宽限秒数")]
-        [SerializeField] private float coyoteTime = 0.12f;
+        [SerializeField] private float coyoteTime = 0.15f;
         [Tooltip("跳跃缓冲：落地前提前按跳跃仍然生效的秒数")]
-        [SerializeField] private float jumpBufferTime = 0.12f;
+        [SerializeField] private float jumpBufferTime = 0.18f;
 
         [Header("下落缓降 Air Drag")]
         [Tooltip("空中下落时的最大下落速度（单位/秒）。\n" +
@@ -109,16 +111,84 @@ namespace DuckKing.Player
         private float _jumpBufferTimer;
         private bool _isGrounded;
         private bool _jumpCutApplied;
+
+        /// <summary>Time of the last successful takeoff, used to bound the short-hop window.</summary>
+        private float _jumpStartTime;
         private float _gravity;
         private float _jumpVelocity;
 
         private bool _inputEnabled = true;
+
+        /// <summary>
+        /// The plank this duck is standing on, or null when it is on normal ground.
+        /// While riding, the duck is a child of that plank, so the plank's rotation
+        /// carries it automatically and nothing has to correct its height.
+        /// </summary>
+        private Transform _plankRiding;
 
         /// <summary>本角色当前世界坐标高度，镜头系统依赖此项。</summary>
         public float Height => transform.position.y;
 
         /// <summary>是否站在地面上。</summary>
         public bool IsGrounded => _isGrounded;
+
+        /// <summary>True while the duck is standing on a balance plank.</summary>
+        public bool IsRidingPlank => _plankRiding != null;
+
+        /// <summary>
+        /// The duck's velocity expressed in the plank's local space.
+        ///
+        /// Rigidbody2D.velocity is always world space, so when the duck is parented to a
+        /// tilted plank its velocity has to be rotated into that plank's frame before it
+        /// can be handed back after leaving.
+        /// </summary>
+        public Vector2 CurrentLocalVelocity
+        {
+            get
+            {
+                if (_rb == null) return Vector2.zero;
+                if (_plankRiding == null) return _rb.velocity;
+
+                return _plankRiding.InverseTransformDirection(_rb.velocity);
+            }
+        }
+
+        /// <summary>
+        /// Called by a balance plank when the duck steps onto it. The duck is not
+        /// parented to the plank: Rigidbody2D simulation ignores the transform hierarchy,
+        /// so parenting would not actually make the duck rotate with it. Recording the
+        /// plank is enough, because the controller only needs it to (a) express its
+        /// movement in the plank's frame and (b) hand the vertical axis to the engine.
+        /// </summary>
+        public void OnBoardPlank(Transform plank)
+        {
+            if (_plankRiding == plank) return;
+
+            _plankRiding = plank;
+
+            // The engine now supplies gravity along the plank's normal, so vertical
+            // velocity must stop being written by this controller. Enabling gravity
+            // scale is what makes a duck on a slope actually slide down it.
+            if (_rb != null) _rb.gravityScale = PlankGravityScale();
+        }
+
+        /// <summary>
+        /// Called by a balance plank when the duck leaves it. The vertical axis goes back
+        /// to the scripted gravity, which expects the duck to be weightless as far as the
+        /// engine is concerned.
+        /// </summary>
+        public void OnLeavePlank(Vector2 worldVelocity)
+        {
+            if (_plankRiding == null) return;
+
+            _plankRiding = null;
+
+            if (_rb != null)
+            {
+                _rb.gravityScale = 0f;
+                _rb.velocity = worldVelocity;
+            }
+        }
 
         /// <summary>
         /// Gates every input read. The run does not start until the player presses a
@@ -201,6 +271,22 @@ namespace DuckKing.Player
         private const float MinSensibleFallSpeed = 3f;
 
         /// <summary>
+        /// Gravity used while standing on a plank, expressed as a multiple of Unity's
+        /// world gravity.
+        ///
+        /// On the plank the engine owns the vertical axis, so the duck has to be given a
+        /// gravity scale that reproduces the same feel as the scripted gravity above.
+        /// The scripted fall is _gravity * fallGravityMultiplier, and Unity's default
+        /// world gravity is -9.81, so the scale is that ratio.
+        /// </summary>
+        private float PlankGravityScale()
+        {
+            const float worldGravity = 9.81f;
+            float effective = _gravity * fallGravityMultiplier;
+            return Mathf.Clamp(effective / worldGravity, 0.1f, 60f);
+        }
+
+        /// <summary>
         /// Derives gravity and launch velocity from the designer-facing values.
         /// h = v0*t/2  =>  v0 = 2h/t ;  g = 2h/t^2
         /// </summary>
@@ -221,22 +307,38 @@ namespace DuckKing.Player
 
             _moveInput = _inputProvider.Horizontal;
 
+            // The buffer only ever has to shrink over real time, and Update is the only
+            // place it shrinks, so it is safe to age it here. Coyote time is NOT aged
+            // here: it is aged once per physics step in FixedUpdate, because a frame that
+            // spans several physics steps would otherwise drain it several times over and
+            // turn a generous grace period into a coin flip.
             if (_inputProvider.JumpPressedThisFrame)
             {
                 _jumpBufferTimer = jumpBufferTime;
             }
-            else
+            else if (_jumpBufferTimer > 0f)
             {
                 _jumpBufferTimer -= Time.deltaTime;
             }
-
-            _coyoteTimer -= Time.deltaTime;
 
             // Toggle fall diagnostics with F9. Temporary probe for the air drag.
             if (UnityEngine.Input.GetKeyDown(KeyCode.F9))
             {
                 _isDebugFall = !_isDebugFall;
                 Debug.Log($"[FallDbg] {name} diagnostics {(_isDebugFall ? "ON" : "OFF")}", this);
+            }
+
+            // Temporary probe for "jump does not fire while a direction is held".
+            // Logs the raw input state on the exact frame the jump key goes down, so a
+            // swallowed press can be told apart from a press that never arrived.
+            if (_inputProvider.JumpPressedThisFrame)
+            {
+                Debug.Log(
+                    $"[JumpProbe] {name} jumpKeyDown jumpHeld={_inputProvider.JumpHeld} " +
+                    $"grounded={_isGrounded} vy={_rb.velocity.y:F2} " +
+                    $"coyote={_coyoteTimer:F3} buffer={_jumpBufferTimer:F3} " +
+                    $"moveInput={_moveInput:F1} inputEnabled={_inputEnabled} " +
+                    $"ridingPlank={_plankRiding != null}", this);
             }
         }
 
@@ -245,9 +347,16 @@ namespace DuckKing.Player
             RecalculateJumpPhysics();
             UpdateGrounded();
 
+            // Refreshed every step while standing. Refreshing rather than only starting
+            // the countdown on the step the duck leaves the ground is what makes walking
+            // off a ledge still count as a jump opportunity for a moment.
             if (_isGrounded && _rb.velocity.y <= 0f)
             {
                 _coyoteTimer = coyoteTime;
+            }
+            else if (_coyoteTimer > 0f)
+            {
+                _coyoteTimer -= Time.fixedDeltaTime;
             }
 
             TryJump();
@@ -301,36 +410,135 @@ namespace DuckKing.Player
         {
             if (_jumpBufferTimer <= 0f || _coyoteTimer <= 0f) return;
 
-            _rb.velocity = new Vector2(_rb.velocity.x, _jumpVelocity);
+            // A jump is always straight up relative to the surface being stood on. On a
+            // tilted plank that is the plank's up axis; on flat ground it is world up.
+            Vector3 jumpDirection = _plankRiding != null ? _plankRiding.up : Vector3.up;
+
+            Vector2 current = _rb.velocity;
+            _rb.velocity = current + (Vector2)jumpDirection * _jumpVelocity;
+
             _jumpBufferTimer = 0f;
             _coyoteTimer = 0f;
             _isGrounded = false;
             _jumpCutApplied = false;
+            _jumpStartTime = Time.time;
+
+            // A jump leaves the plank immediately, so the engine's gravity must be handed
+            // back to the scripted gravity in the same step. Otherwise the duck keeps
+            // the plank gravity mid-air and drops much faster than it does off a ledge.
+            // The plank notices the duck has left on its own next step.
+            if (_plankRiding != null)
+            {
+                _plankRiding = null;
+                if (_rb != null) _rb.gravityScale = 0f;
+            }
         }
 
         private void ApplyHorizontalMovement()
         {
             float targetSpeed = _moveInput * moveSpeed;
-            float currentSpeed = _rb.velocity.x;
 
             bool isAccelerating = Mathf.Abs(targetSpeed) > 0.01f;
             float accel = isAccelerating
                 ? (_isGrounded ? groundAccel : airAccel)
                 : (_isGrounded ? groundDecel : airDecel);
 
+            // On a plank the duck still has to walk, but "right" means "along the surface"
+            // rather than "along world X". Rather than pushing a force through the solver
+            // (which fights the plank contact and, at these accelerations, barely moves
+            // the duck at all), the surface component of the velocity is set directly and
+            // the normal component is left exactly as the solver produced it. That keeps
+            // the plank holding the duck up while giving back the same responsiveness as
+            // walking on flat ground.
+            if (_plankRiding != null)
+            {
+                ApplyPlankWalk(accel, targetSpeed);
+                return;
+            }
+
+            float currentSpeed = _rb.velocity.x;
             float newSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, accel * Time.fixedDeltaTime);
             _rb.velocity = new Vector2(newSpeed, _rb.velocity.y);
         }
 
+        /// <summary>
+        /// Walks a duck along a tilted plank.
+        ///
+        /// The velocity is split into a component along the plank surface and a component
+        /// along its normal. Only the along-surface part is rewritten; the normal part is
+        /// preserved untouched, because that component is what the plank contact is
+        /// holding up. Overwriting it is what made the old scripted plank impossible to
+        /// stand on, and leaving it alone is what keeps this version stable.
+        ///
+        /// Gravity is cancelled along the surface. The plank runs with the engine's
+        /// gravity enabled so the contact keeps the duck pinned to it, but that same
+        /// gravity also pulls along the slope: at 18 degrees the downhill pull is about
+        /// 42 units/s^2 against a 90 unit/s^2 walking acceleration, which is why walking
+        /// uphill used to feel like wading through mud. The slope pull is subtracted back
+        /// out every step, so the surface behaves like flat ground in both directions.
+        /// </summary>
+        private void ApplyPlankWalk(float accel, float targetSpeed)
+        {
+            Vector2 along = _plankRiding.right;
+            Vector2 normal = _plankRiding.up;
+
+            Vector2 velocity = _rb.velocity;
+
+            // Split into the two plank axes.
+            float alongSpeed = Vector2.Dot(velocity, along);
+            float normalSpeed = Vector2.Dot(velocity, normal);
+
+            // Remove the component of gravity that acts along the slope. Without this the
+            // duck fights the slope on the way up and is dragged downslope while standing
+            // still, which also breaks "stand still and stay put".
+            float gravityAlong = Physics2D.gravity.y * _rb.gravityScale * along.y;
+            alongSpeed -= gravityAlong * Time.fixedDeltaTime;
+
+            // Accelerate along the surface exactly like flat ground does.
+            alongSpeed = Mathf.MoveTowards(alongSpeed, targetSpeed, accel * Time.fixedDeltaTime);
+
+            // Rebuild the velocity from the unchanged normal component.
+            _rb.velocity = along * alongSpeed + normal * normalSpeed;
+        }
+
         private void ApplyVerticalPhysics()
         {
+            // On a plank the vertical axis is handed to the physics engine. The plank is
+            // a real hinged body and its surface normal pushes the duck up; writing
+            // velocity.y here would overwrite that push every step and the duck would
+            // sink through the plank, which is exactly what happened with a scripted
+            // plank. Gravity for this case comes from the engine instead, so the duck
+            // rigidbody's gravity scale is switched on while riding.
+            if (_plankRiding != null && _rb != null)
+            {
+                _rb.gravityScale = PlankGravityScale();
+                return;
+            }
+
             float vy = _rb.velocity.y;
 
-            // 提前松开跳跃键：截断上升速度，实现短跳与长跳。
-            if (!_inputProvider.JumpHeld && vy > 0f && !_jumpCutApplied)
+            // Short hop: releasing the jump key while still rising cuts the rise short.
+            //
+            // This only counts inside a short window right after takeoff. The first
+            // version of this test ran on every step of the rise, and a single frame
+            // where the jump key read as released (easy to hit while a direction key is
+            // held down, because the two reads do not always report on the same frame)
+            // would latch _jumpCutApplied for the rest of the jump. The visible symptom
+            // was a jump that looked dead whenever a direction key was held.
+            if (!_jumpCutApplied && vy > 0f)
             {
-                vy *= jumpCutMultiplier;
-                _jumpCutApplied = true;
+                float sinceJump = Time.time - _jumpStartTime;
+
+                if (sinceJump > jumpCutWindow)
+                {
+                    // Past the window: stop watching the key for the rest of this jump.
+                    _jumpCutApplied = true;
+                }
+                else if (!_inputProvider.JumpHeld)
+                {
+                    vy *= jumpCutMultiplier;
+                    _jumpCutApplied = true;
+                }
             }
 
             float g = _gravity;

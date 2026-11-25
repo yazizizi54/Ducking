@@ -62,6 +62,9 @@ namespace DuckKing.Menu
         [Tooltip("Fade out duration before loading")]
         [SerializeField] private float fadeOutDuration = 0.35f;
 
+        [Tooltip("Fade in duration when the title screen opens. 0 = instant.")]
+        [SerializeField] private float fadeInDuration = 0.6f;
+
         [Header("Fade (optional)")]
         [Tooltip("Full screen black Image used for the transition")]
         [SerializeField] private Image fadeOverlay;
@@ -111,11 +114,44 @@ namespace DuckKing.Menu
 
             if (fadeOverlay != null)
             {
+                // Start fully black and lift the shutter in Start(). Awake runs before
+                // the first frame is drawn, so the title never flashes at full brightness
+                // for a frame before the fade starts.
                 Color c = fadeOverlay.color;
-                c.a = 0f;
+                c.a = fadeInDuration > 0f ? 1f : 0f;
                 fadeOverlay.color = c;
                 fadeOverlay.raycastTarget = false;
+                fadeOverlay.transform.SetAsLastSibling();
             }
+        }
+
+        private void Start()
+        {
+            if (fadeOverlay != null && fadeInDuration > 0f)
+            {
+                StartCoroutine(FadeIn());
+            }
+        }
+
+        /// <summary>
+        /// Lifts the black shutter so the title screen eases in instead of popping.
+        /// Runs on unscaled time: the menu may be opened while timeScale is 0.
+        /// </summary>
+        private IEnumerator FadeIn()
+        {
+            float t = 0f;
+            while (t < fadeInDuration)
+            {
+                t += Time.unscaledDeltaTime;
+                Color c = fadeOverlay.color;
+                c.a = 1f - Mathf.Clamp01(t / fadeInDuration);
+                fadeOverlay.color = c;
+                yield return null;
+            }
+
+            Color end = fadeOverlay.color;
+            end.a = 0f;
+            fadeOverlay.color = end;
         }
 
         /// <summary>
@@ -154,7 +190,9 @@ namespace DuckKing.Menu
 
             if (AnyPanelOpen) return;
             if (!pressAnyKeyToStart) return;
-            if (Time.unscaledTime - _openTime < inputGraceTime) return;
+
+            // A key that lands during the opening fade would skip the title unseen.
+            if (Time.unscaledTime - _openTime < inputGraceTime + fadeInDuration) return;
 
             for (int i = 0; i < startKeys.Length; i++)
             {
