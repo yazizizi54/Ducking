@@ -22,8 +22,19 @@ namespace DuckKing.CameraSystem
         [SerializeField] private float heightOffset = 2.5f;
         [Tooltip("Smoothing time when the camera moves up")]
         [SerializeField] private float smoothUp = 0.22f;
-        [Tooltip("Smoothing time when the camera moves down; keep larger than smoothUp")]
-        [SerializeField] private float smoothDown = 0.45f;
+        [Tooltip("Smoothing time when the camera moves down at normal walking speed.\n" +
+                 "Larger values keep the view calm, but the camera then takes that long to " +
+                 "catch a duck that fell, so the ledges below stay off screen.")]
+        [SerializeField] private float smoothDown = 0.22f;
+
+        [Header("Fast Fall Catch-Up")]
+        [Tooltip("Smoothing time the downward follow speeds up to while a duck is " +
+                 "falling quickly. Only affects real falls, not normal hopping.")]
+        [SerializeField] private float smoothDownFast = 0.06f;
+
+        [Tooltip("Downward speed (world units per second) where the camera reaches " +
+                 "Smooth Down Fast. Below this it blends from Smooth Down.")]
+        [SerializeField] private float fallSpeedForFastFollow = 12f;
 
         [Header("Horizontal Follow")]
         [Tooltip("Follow the midpoint of both ducks horizontally.\n" +
@@ -250,7 +261,15 @@ namespace DuckKing.CameraSystem
                 _targetY = desiredY;
             }
 
-            float smoothTime = _targetY > _currentY ? smoothUp : smoothDown;
+            // Looking down is not symmetric with looking up: a duck only travels downward
+            // fast when it just missed a jump, and that is exactly when the player needs
+            // to see the ledges below. A fixed smoothing time either lags behind a fall
+            // or makes every ordinary small hop feel busy, so the time is derived from
+            // how fast the lower duck is actually dropping.
+            float smoothTime = _targetY > _currentY
+                ? smoothUp
+                : DownSmoothTimeFor(GetLowerDuckFallSpeed());
+
             _currentY = Mathf.SmoothDamp(_currentY, _targetY, ref _smoothVelocity, smoothTime);
 
             float desiredX = ClampX(FollowXRaw());
@@ -641,6 +660,49 @@ namespace DuckKing.CameraSystem
         {
             if (worldMaxY < worldMinY) worldMaxY = worldMinY;
             if (worldMaxX < worldMinX) worldMaxX = worldMinX;
+        }
+
+        /// <summary>
+        /// Blends the downward smoothing time between the calm walking value and the
+        /// fast catch-up value, based on how quickly a duck is falling.
+        /// </summary>
+        private float DownSmoothTimeFor(float fallSpeed)
+        {
+            if (fallSpeed <= 0f) return smoothDown;
+
+            float t = fallSpeedForFastFollow > 0.01f
+                ? Mathf.Clamp01(fallSpeed / fallSpeedForFastFollow)
+                : 1f;
+
+            return Mathf.Lerp(smoothDown, Mathf.Min(smoothDownFast, smoothDown), t);
+        }
+
+        /// <summary>
+        /// How fast the lower duck is moving down, in world units per second.
+        /// Uses the duck's own velocity so a duck standing still never triggers the
+        /// fast follow, even if the camera still has some leftover motion to burn off.
+        /// </summary>
+        private float GetLowerDuckFallSpeed()
+        {
+            DuckController lower = null;
+
+            if (duckA != null && duckB != null)
+            {
+                lower = duckA.Height <= duckB.Height ? duckA : duckB;
+            }
+            else if (duckA != null)
+            {
+                lower = duckA;
+            }
+            else if (duckB != null)
+            {
+                lower = duckB;
+            }
+
+            if (lower == null) return 0f;
+
+            float vy = lower.BodyVelocity.y;
+            return vy < 0f ? -vy : 0f;
         }
 
         /// <summary>

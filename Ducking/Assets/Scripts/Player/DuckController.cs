@@ -86,8 +86,10 @@ namespace DuckKing.Player
         public float CurrentSpeedY => _rb != null ? _rb.velocity.y : 0f;
 
         [Header("地面检测")]
-        [Tooltip("哪些层算作可站立的地面。默认是全部层，鸭子自身的碰撞体会被代码排除，\n" +
-                 "但另一只鸭仍会被判为地面。想让鸭子踩不到对方，就把它们放到单独的层并从掩码中去掉。")]
+        [Tooltip("哪些层算作可站立的地面。\n" +
+                 "注意：另一只鸭子也会被算作地面，两鸭叠在一起时会让 grounded 误判，\n" +
+                 "进而影响土狼时间和短跳判定。代码里已强制排除另一个 DuckController，\n" +
+                 "这一项只管真正的场景地面。")]
         [SerializeField] private LayerMask groundLayers = ~0;
         [Tooltip("地面检测点相对脚底的偏移")]
         [SerializeField] private Vector2 groundCheckOffset = new Vector2(0f, -0.02f);
@@ -127,6 +129,10 @@ namespace DuckKing.Player
         [Tooltip("F10/F11 每次移动的距离（单位）")]
         [SerializeField] private float nudgeStep = 1f;
 
+        [Tooltip("临时诊断：勾上后每次按跳跃键都打印一次按键、地面、土狼时间状态。\n" +
+                 "排查\"按跳没反应\"时用它，确认按键到底有没有被读到。")]
+        [SerializeField] private bool debugInput = true;
+
         private float _groundLogTimer;
         private float _moveLogTimer;
 
@@ -136,6 +142,25 @@ namespace DuckKing.Player
         private float _jumpVelocity;
 
         private bool _inputEnabled = true;
+
+        /// <summary>
+        /// When this duck left the ground by jumping, in Time.time.
+        ///
+        /// Used to keep the short-hop key test away from the first instant of the
+        /// jump. The key is polled once per rendered frame, so on a frame that spans
+        /// several physics steps the very first steps still see "not held" from
+        /// before the press was read, and the jump gets cut to 45% and feels like it
+        /// never happened. That was the "hold a direction, then jump, nothing
+        /// happens" report.
+        /// </summary>
+        private float _jumpLiftOffTime = -1f;
+
+        /// <summary>
+        /// Time after lift-off during which the short-hop key test is skipped.
+        /// Two physics steps is enough to cover a rendered frame at 30 fps while
+        /// staying well inside the 0.32 s rise, so a deliberate tap-cut still works.
+        /// </summary>
+        private const float JumpCutGraceTime = 0.05f;
 
         /// <summary>
         /// The plank this duck is standing on, or null when it is on normal ground.
@@ -158,6 +183,14 @@ namespace DuckKing.Player
         /// sound fires on the real jump, not on a buffered key press that failed.
         /// </summary>
         public bool JumpedThisFrame { get; private set; }
+
+        /// <summary>
+        /// True on the rendered frame a jump actually left the ground, whether it fired
+        /// straight from the press or out of the jump buffer a few steps later. Lets a
+        /// probe tell "the key was never read" apart from "the key was read but the jump
+        /// waited for the landing".
+        /// </summary>
+        public bool JumpFiredThisFrame { get; private set; }
 
         /// <summary>
         /// Time.time of the most recent jump. Unlike JumpedThisFrame, which spans a
@@ -347,6 +380,8 @@ namespace DuckKing.Player
 
         private void Update()
         {
+            JumpFiredThisFrame = false;
+
             if (!_inputEnabled)
             {
                 _moveInput = 0f;
@@ -363,6 +398,19 @@ namespace DuckKing.Player
             if (_inputProvider.JumpPressedThisFrame)
             {
                 _jumpBufferTimer = jumpBufferTime;
+
+                // The probe has to live here rather than in FixedUpdate: GetKeyDown is
+                // true for exactly one rendered frame, and a physics step that runs in a
+                // different frame would read it as false. That is why an earlier version
+                // of this probe never printed anything even while jumps were working.
+                if (debugInput)
+                {
+                    Debug.Log(
+                        $"[KeyProbe] {name} jumpDown moveInput={_moveInput:F1} " +
+                        $"grounded={_isGrounded} coyote={_coyoteTimer:F3} " +
+                        $"buffer={_jumpBufferTimer:F3} inputEnabled={_inputEnabled}",
+                        this);
+                }
             }
             else if (_jumpBufferTimer > 0f)
             {
@@ -402,7 +450,15 @@ namespace DuckKing.Player
             // Refreshed every step while standing. Refreshing rather than only starting
             // the countdown on the step the duck leaves the ground is what makes walking
             // off a ledge still count as a jump opportunity for a moment.
-            if (_isGrounded && _rb.velocity.y <= 0f)
+            //
+            // The old version also required velocity.y <= 0 here, which quietly killed
+            // the whole grace period. ApplyVerticalPhysics writes a downward velocity
+            // every step before the engine resolves the contact, so on a perfectly
+            // grounded step the velocity could still read negative (or, right after a
+            // launch was swallowed, positive). Either way the else branch fired and the
+            // timer drained to zero while the duck was standing on solid ground, which
+            // is what made the jump key look dead: TryJump bails out when coyote is 0.
+            if (_isGrounded)
             {
                 _coyoteTimer = coyoteTime;
             }
@@ -454,6 +510,14 @@ namespace DuckKing.Player
                 if (hit.collider == _collider) continue;
                 if (hit.collider.attachedRigidbody == _rb) continue;
 
+                // The other duck is not ground. groundLayers is "everything" by default,
+                // and another player is a solid collider, so standing beside or brushing
+                // past it used to report grounded while actually airborne. That kept the
+                // coyote timer topped up and let the short-hop test run on jumps that had
+                // already left the ground, which is what made the jump key feel dead
+                // after walking into the partner.
+                if (hit.collider.GetComponentInParent<DuckController>() != null) continue;
+
                 _isGrounded = true;
                 break;
             }
@@ -489,6 +553,9 @@ namespace DuckKing.Player
             _jumpCutApplied = false;
             _jumpStartTime = Time.time;
 
+            // Arms the grace period for the short-hop test in ApplyVerticalPhysics.
+            _jumpLiftOffTime = _jumpStartTime;
+
             // A jump leaves the plank immediately, so the engine's gravity must be handed
             // back to the scripted gravity in the same step. Otherwise the duck keeps
             // the plank gravity mid-air and drops much faster than it does off a ledge.
@@ -500,7 +567,16 @@ namespace DuckKing.Player
             }
 
             JumpedThisFrame = true;
+            JumpFiredThisFrame = true;
             LastJumpTime = Time.time;
+
+            if (debugInput)
+            {
+                Debug.Log(
+                    $"[JumpFired] {name} vy={_rb.velocity.y:F2} grounded={_isGrounded} " +
+                    $"storedBuffer={_jumpBufferTimer:F3}",
+                    this);
+            }
         }
 
         private void ApplyHorizontalMovement()
@@ -625,7 +701,17 @@ namespace DuckKing.Player
             // latch on every step of the rise, which meant one frame where the key read as
             // released would cut a jump in half; that is why it now clears the flag only
             // on a real release and never otherwise.
-            if (!_jumpCutApplied && vy > 0f && !_inputProvider.JumpHeld)
+            //
+            // The lift-off grace period closes a second version of the same bug. The key
+            // is polled in Update, once per rendered frame, while this runs once per
+            // physics step. On a frame that spans several steps, the steps that run
+            // before the press is read still see the key as up, and the fresh jump was
+            // cut to 45% of its speed in the very step it launched. A jump that tall
+            // only lifts the duck about two-thirds of a unit, which reads as "the jump
+            // key did nothing". A real tap-cut lands well after the grace and still works.
+            bool pastLiftOffGrace = Time.time - _jumpLiftOffTime >= JumpCutGraceTime;
+
+            if (!_jumpCutApplied && pastLiftOffGrace && vy > 0f && !_inputProvider.JumpHeld)
             {
                 vy *= jumpCutMultiplier;
                 _jumpCutApplied = true;
