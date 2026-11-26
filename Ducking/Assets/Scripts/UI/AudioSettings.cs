@@ -10,6 +10,10 @@ namespace DuckKing.UI
     /// The values live in PlayerPrefs under the same keys the title screen has
     /// always used, so a change made mid-run is still there on the next launch.
     /// Every reference is optional: a panel that only has one slider still works.
+    ///
+    /// Moving a slider not only writes the value but also tells the audio director
+    /// straight away. Without that nudge the sound keeps playing at the level it
+    /// had when it started, which reads as "the slider does nothing".
     /// </summary>
     public class AudioSettings : MonoBehaviour
     {
@@ -81,6 +85,9 @@ namespace DuckKing.UI
 
             PlayerPrefs.SetFloat(KeyMusic, value);
             PlayerPrefs.Save();
+
+            // Push the level into whatever is playing right now.
+            NotifyDirector();
         }
 
         private void OnSfxChanged(float value)
@@ -90,6 +97,20 @@ namespace DuckKing.UI
 
             PlayerPrefs.SetFloat(KeySfx, value);
             PlayerPrefs.Save();
+
+            NotifyDirector();
+        }
+
+        /// <summary>
+        /// Tells the audio director to re-read the saved volumes. Guarded because the
+        /// director only exists once a scene that has one has loaded.
+        /// </summary>
+        private void NotifyDirector()
+        {
+            if (DuckKing.Audio.AudioDirector.Instance != null)
+            {
+                DuckKing.Audio.AudioDirector.Instance.ApplyVolumes();
+            }
         }
 
         private void ApplyToSources(float music, float sfx)

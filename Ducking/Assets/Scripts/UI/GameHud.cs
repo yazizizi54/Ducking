@@ -86,10 +86,7 @@ namespace DuckKing.UI
             var gm = SceneGameManager.Instance;
             bool waiting = gm != null && gm.IsWaitingForStart;
 
-            if (selfDrivenClock && _localRunning && !waiting)
-            {
-                _localTime += Time.unscaledDeltaTime;
-            }
+            if (selfDrivenClock) UpdateLocalClock(waiting);
 
             RefreshTimer();
             RefreshWaitingHint(waiting);
@@ -106,6 +103,19 @@ namespace DuckKing.UI
         /// moment the gate opens. Without this the player sees a frozen 00:00.00 and
         /// has no way to know the game is waiting on them.
         /// </summary>
+        /// <summary>
+        /// The HUD's own clock, used only when the manager is missing or disabled.
+        /// It follows the same pause rules as the manager so the two can never show
+        /// different numbers: stop while waiting for the start key, stop while a
+        /// pause panel is open, stop once the run has ended.
+        /// </summary>
+        private void UpdateLocalClock(bool waiting)
+        {
+            if (!_localRunning || waiting) return;
+            if (PauseStateGuard.Instance != null && PauseStateGuard.Instance.IsPaused) return;
+            _localTime += Time.unscaledDeltaTime;
+        }
+
         private void RefreshWaitingHint(bool waiting)
         {
             if (waitingHint == null) return;
@@ -175,14 +185,14 @@ namespace DuckKing.UI
 
             if (pauseWhileSettingsOpen)
             {
+                // Opening is the only thing this script asks for. Restoring time is
+                // left to PauseStateGuard, which also covers the case where the panel
+                // is closed by its own Back button instead of this toggle. Releasing
+                // here as well would let two scripts fight over one global value.
                 if (visible)
                 {
                     _timeScaleBeforeOpen = Time.timeScale;
                     Time.timeScale = 0f;
-                }
-                else
-                {
-                    Time.timeScale = _timeScaleBeforeOpen <= 0f ? 1f : _timeScaleBeforeOpen;
                 }
             }
 

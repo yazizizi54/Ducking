@@ -43,6 +43,10 @@ namespace DuckKing.Gameplay
         [Tooltip("Seconds the waiting message stays after the run starts, as feedback")]
         [SerializeField] private float startFlashTime = 0.6f;
 
+        [Tooltip("Freeze the clock while a pause panel is open. Counted time is meant to " +
+                 "measure the climb, so reading the settings screen must not cost seconds.")]
+        [SerializeField] private bool pauseTimerWhilePaused = true;
+
         private float _elapsedSeconds;
         private bool _timerRunning;
         private bool _waitingForStart;
@@ -200,7 +204,16 @@ namespace DuckKing.Gameplay
             // The timer is the only HUD element now, so it drives the scene clock.
             // Unscaled time keeps it honest: result screens drop timeScale to zero
             // and the count must stop there rather than silently drifting.
-            if (_timerRunning && !_finished)
+            //
+            // A pause panel is the one exception: it freezes the game on purpose and
+            // the clock has to freeze with it, or the reading time would be charged
+            // to the run. The guard is the single owner of that state, so asking it
+            // keeps two scripts from disagreeing about whether the game is paused.
+            bool paused = pauseTimerWhilePaused
+                && DuckKing.UI.PauseStateGuard.Instance != null
+                && DuckKing.UI.PauseStateGuard.Instance.IsPaused;
+
+            if (_timerRunning && !_finished && !paused)
             {
                 _elapsedSeconds += Time.unscaledDeltaTime;
             }

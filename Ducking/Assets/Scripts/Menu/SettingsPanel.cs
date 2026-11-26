@@ -161,12 +161,27 @@ namespace DuckKing.Menu
         {
             if (musicValueText != null) musicValueText.text = Mathf.RoundToInt(value * 100f) + "%";
             Save();
+            NotifyDirector();
         }
 
         private void OnSfxChanged(float value)
         {
             if (sfxValueText != null) sfxValueText.text = Mathf.RoundToInt(value * 100f) + "%";
             Save();
+            NotifyDirector();
+        }
+
+        /// <summary>
+        /// Hands the new levels to the audio director straight away. Saving alone only
+        /// changes what the next launch will sound like; the music already playing on
+        /// the title screen would otherwise ignore the slider entirely.
+        /// </summary>
+        private void NotifyDirector()
+        {
+            if (DuckKing.Audio.AudioDirector.Instance != null)
+            {
+                DuckKing.Audio.AudioDirector.Instance.ApplyVolumes();
+            }
         }
 
         private void OnFullscreenChanged(bool value)
@@ -184,14 +199,15 @@ namespace DuckKing.Menu
 
             AudioListener.volume = 1f;
             Save();
+            NotifyDirector();
         }
 
         // ------------------------------------------------------------------
 
         /// <summary>
-        /// Music and SFX volumes are stored but nothing in the jam build uses them
-        /// yet. Public getters let an audio manager pick them up later without
-        /// changing this panel.
+        /// Music and SFX volumes are the same two values the in-game AudioSettings
+        /// panel owns; both write the duck_music_vol / duck_sfx_vol keys and both push
+        /// the result into the audio director, so the two screens cannot drift apart.
         /// </summary>
         public float MusicVolume => musicSlider != null ? musicSlider.value : 0.8f;
         public float SfxVolume => sfxSlider != null ? sfxSlider.value : 1f;

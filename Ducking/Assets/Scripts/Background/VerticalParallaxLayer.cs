@@ -1,3 +1,4 @@
+using DuckKing.CameraSystem;
 using UnityEngine;
 
 namespace DuckKing.Background
@@ -38,9 +39,22 @@ namespace DuckKing.Background
         [Range(0f, 1f)]
         [SerializeField] private float horizontalFactor = 0.3f;
 
+        [Header("Horizontal After Summit")]
+        [Tooltip("Mirror the camera's summit pan: the layer only starts following the camera " +
+                 "sideways once CameraFollowLower allows that pan.\n" +
+                 "Without this the background stays put while the camera moves and the lake " +
+                 "appears to slide off the edge of the world.")]
+        [SerializeField] private bool followHorizontallyAfterSummit = false;
+
+        [Tooltip("Optional camera whose summit state is mirrored. Left empty it is found " +
+                 "automatically, so the two settings never drift apart.")]
+        [SerializeField] private CameraFollowLower cameraFollow;
+
         private Vector3 _startPosition;
         private float _startCameraY;
         private float _startCameraX;
+        private float _startX;
+        private bool _summitPanCached;
 
         private void OnEnable()
         {
@@ -55,6 +69,8 @@ namespace DuckKing.Background
         private void CacheOrigin()
         {
             _startPosition = transform.position;
+            _startX = _startPosition.x;
+            _summitPanCached = false;
 
             var cam = ResolveCamera();
             if (cam != null)
@@ -92,12 +108,59 @@ namespace DuckKing.Background
                 float cameraDeltaX = cam.position.x - _startCameraX;
                 newX = _startPosition.x + cameraDeltaX * (1f - horizontalFactor);
             }
+            else if (followHorizontallyAfterSummit && SummitPanActive())
+            {
+                // Measured from the moment the pan opened, not from scene load, so the
+                // layer does not snap sideways on the switch frame.
+                float cameraDeltaX = cam.position.x - _startCameraX;
+                newX = _startX + cameraDeltaX * (1f - horizontalFactor);
+            }
             else
             {
                 newX = _startPosition.x;
             }
 
             transform.position = new Vector3(newX, newY, _startPosition.z);
+        }
+
+        /// <summary>
+        /// True when the camera is allowed to pan sideways right now.
+        ///
+        /// The horizontal origin is re-cached on the first frame the pan turns on.
+        /// Without that, every unit the camera travelled while it was still locked
+        /// would be applied as a jump on the switch frame.
+        /// </summary>
+        private bool SummitPanActive()
+        {
+            if (cameraFollow == null) cameraFollow = FindCameraFollow();
+            if (cameraFollow == null) return false;
+
+            bool active = cameraFollow.HorizontalFollowActive;
+
+            if (active && !_summitPanCached)
+            {
+                _summitPanCached = true;
+                _startCameraX = cameraFollow.transform.position.x;
+                _startX = transform.position.x;
+            }
+            else if (!active)
+            {
+                _summitPanCached = false;
+            }
+
+            return active;
+        }
+
+        private CameraFollowLower FindCameraFollow()
+        {
+            var cam = ResolveCamera();
+            if (cam != null)
+            {
+                var found = cam.GetComponent<CameraFollowLower>();
+                if (found != null) return found;
+            }
+
+            return FindObjectOfType<CameraFollowLower>();
         }
 
         /// <summary>Re-anchors this layer to the camera's current position.</summary>

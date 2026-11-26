@@ -1,3 +1,4 @@
+using DuckKing.Gameplay;
 using DuckKing.Input;
 using UnityEngine;
 
@@ -112,6 +113,23 @@ namespace DuckKing.Player
         private bool _isGrounded;
         private bool _jumpCutApplied;
 
+        [Tooltip("临时诊断：勾上后每 0.1 秒打印一次地面判定结果")]
+        [SerializeField] private bool debugGround;
+
+        [Tooltip("临时诊断：把速度写入后立即读回来，用于确认物理引擎是否在覆盖它")]
+        [SerializeField] private bool debugVelocity;
+
+        [Tooltip("临时诊断：勾上后 F10 把鸭子抬高一格，F11 压低一格，用来验证是否卡在碰撞体里")]
+        [SerializeField] private bool debugNudgeUp;
+
+        [SerializeField] private bool debugNudgeDown;
+
+        [Tooltip("F10/F11 每次移动的距离（单位）")]
+        [SerializeField] private float nudgeStep = 1f;
+
+        private float _groundLogTimer;
+        private float _moveLogTimer;
+
         /// <summary>Time of the last successful takeoff, used to bound the short-hop window.</summary>
         private float _jumpStartTime;
         private float _gravity;
@@ -131,6 +149,21 @@ namespace DuckKing.Player
 
         /// <summary>是否站在地面上。</summary>
         public bool IsGrounded => _isGrounded;
+
+        /// <summary>Current physics velocity, for audio and feedback that must not touch it.</summary>
+        public Vector2 BodyVelocity => _rb != null ? _rb.velocity : Vector2.zero;
+
+        /// <summary>
+        /// True on the frame a jump actually launched. Read by DuckSfx so the jump
+        /// sound fires on the real jump, not on a buffered key press that failed.
+        /// </summary>
+        public bool JumpedThisFrame { get; private set; }
+
+        /// <summary>
+        /// Time.time of the most recent jump. Unlike JumpedThisFrame, which spans a
+        /// single physics step, this lets one-shot feedback compare and fire once.
+        /// </summary>
+        public float LastJumpTime { get; private set; } = -1f;
 
         /// <summary>True while the duck is standing on a balance plank.</summary>
         public bool IsRidingPlank => _plankRiding != null;
@@ -216,13 +249,13 @@ namespace DuckKing.Player
         private void Awake()
         {
             _rb = GetComponent<Rigidbody2D>();
-            _collider = GetComponent<CapsuleCollider2D>();
 
-            // Fall back to any 2D collider: the ducks are built with a BoxCollider2D
-            // in some scenes, and requiring the capsule type silently produced a null
-            // collider and therefore "never grounded".
-            if (_collider == null) _collider = GetComponent<BoxCollider2D>();
-            if (_collider == null) _collider = GetComponent<Collider2D>();
+            // Pick the collider that is actually enabled. GetComponent returns a disabled
+            // component too, and a disabled collider reports an empty bounds, which put
+            // the ground probe at the duck's centre with a zero-sized footprint. That
+            // misreported "grounded" while the duck kept falling, and the duck only kept
+            // moving because the large ground acceleration outran the contact solver.
+            _collider = GetFirstEnabledCollider();
 
             // Build the input immediately. If any line below throws, Update and
             // FixedUpdate would run with a null provider and flood the console
@@ -238,12 +271,9 @@ namespace DuckKing.Player
 
             if (_collider == null)
             {
-                // A duck built with only a Box collider still gets ground detection.
-                _collider = GetComponent<BoxCollider2D>();
-                if (_collider == null)
-                {
-                    Debug.LogError($"[Duck] {name} has no 2D collider. Ground detection disabled.", this);
-                }
+                // Report rather than silently continue: without a collider the ground
+                // probe has nothing to measure and every surface reads as "not grounded".
+                Debug.LogError($"[Duck] {name} has no enabled 2D collider. Ground detection disabled.", this);
             }
 
             _rb.gravityScale = 0f;
@@ -269,6 +299,24 @@ namespace DuckKing.Player
         private const float DefaultMaxFallSpeed = 12f;
         private const float DefaultFallSpeedSoftening = 38f;
         private const float MinSensibleFallSpeed = 3f;
+
+        /// <summary>
+        /// Returns the first enabled 2D collider on this object.
+        ///
+        /// The ducks carry a disabled capsule alongside the real box. GetComponent hands
+        /// back disabled components, so asking for the capsule by type silently selected
+        /// an empty collider and broke ground detection.
+        /// </summary>
+        private Collider2D GetFirstEnabledCollider()
+        {
+            var colliders = GetComponents<Collider2D>();
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i] != null && colliders[i].enabled) return colliders[i];
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Gravity used while standing on a plank, expressed as a multiple of Unity's
@@ -344,6 +392,10 @@ namespace DuckKing.Player
 
         private void FixedUpdate()
         {
+            // The flag describes a single physics step, so it is cleared before the
+            // step that may set it again.
+            JumpedThisFrame = false;
+
             RecalculateJumpPhysics();
             UpdateGrounded();
 
@@ -395,6 +447,7 @@ namespace DuckKing.Player
             var hits = Physics2D.BoxCastAll(origin, castSize, 0f, Vector2.down, castDistance, groundLayers);
 
             _isGrounded = false;
+
             foreach (var hit in hits)
             {
                 if (hit.collider == null) continue;
@@ -403,6 +456,19 @@ namespace DuckKing.Player
 
                 _isGrounded = true;
                 break;
+            }
+
+            if (debugGround)
+            {
+                _groundLogTimer += Time.fixedDeltaTime;
+                if (_groundLogTimer >= 0.1f)
+                {
+                    _groundLogTimer = 0f;
+                    Debug.Log(
+                        $"[Ground] {name} grounded={_isGrounded} " +
+                        $"vx={_rb.velocity.x:F2} pos=({transform.position.x:F2},{transform.position.y:F2})",
+                        this);
+                }
             }
         }
 
@@ -432,13 +498,18 @@ namespace DuckKing.Player
                 _plankRiding = null;
                 if (_rb != null) _rb.gravityScale = 0f;
             }
+
+            JumpedThisFrame = true;
+            LastJumpTime = Time.time;
         }
 
         private void ApplyHorizontalMovement()
         {
             float targetSpeed = _moveInput * moveSpeed;
+            float currentSpeed = _rb.velocity.x;
 
             bool isAccelerating = Mathf.Abs(targetSpeed) > 0.01f;
+
             float accel = isAccelerating
                 ? (_isGrounded ? groundAccel : airAccel)
                 : (_isGrounded ? groundDecel : airDecel);
@@ -456,9 +527,21 @@ namespace DuckKing.Player
                 return;
             }
 
-            float currentSpeed = _rb.velocity.x;
             float newSpeed = Mathf.MoveTowards(currentSpeed, targetSpeed, accel * Time.fixedDeltaTime);
             _rb.velocity = new Vector2(newSpeed, _rb.velocity.y);
+
+            if (debugGround)
+            {
+                _moveLogTimer += Time.fixedDeltaTime;
+                if (_moveLogTimer >= 0.1f)
+                {
+                    _moveLogTimer = 0f;
+                    Debug.Log(
+                        $"[Move] {name} moveInput={_moveInput:F2} target={targetSpeed:F2} " +
+                        $"accel={accel:F1} grounded={_isGrounded} " +
+                        $"before={currentSpeed:F2} after={_rb.velocity.x:F2}", this);
+                }
+            }
         }
 
         /// <summary>
@@ -503,6 +586,25 @@ namespace DuckKing.Player
 
         private void ApplyVerticalPhysics()
         {
+            // Temporary: let the designer lift the duck out of whatever it is wedged in
+            // without leaving Play mode. Respawn points and hand-placed colliders drift,
+            // and rebuilding the scene just to unstick a test duck wastes a minute each
+            // time. Remove once the level geometry is final.
+            if (debugNudgeUp && UnityEngine.Input.GetKeyDown(KeyCode.F10))
+            {
+                Vector2 p = _rb.position;
+                _rb.position = new Vector2(p.x, p.y + nudgeStep);
+                _rb.velocity = Vector2.zero;
+                Debug.Log($"[Nudge] {name} moved to y={_rb.position.y:F2}", this);
+            }
+
+            if (debugNudgeDown && UnityEngine.Input.GetKeyDown(KeyCode.F11))
+            {
+                Vector2 p = _rb.position;
+                _rb.position = new Vector2(p.x, p.y - nudgeStep);
+                _rb.velocity = Vector2.zero;
+                Debug.Log($"[Nudge] {name} moved to y={_rb.position.y:F2}", this);
+            }
             // On a plank the vertical axis is handed to the physics engine. The plank is
             // a real hinged body and its surface normal pushes the duck up; writing
             // velocity.y here would overwrite that push every step and the duck would
@@ -519,26 +621,14 @@ namespace DuckKing.Player
 
             // Short hop: releasing the jump key while still rising cuts the rise short.
             //
-            // This only counts inside a short window right after takeoff. The first
-            // version of this test ran on every step of the rise, and a single frame
-            // where the jump key read as released (easy to hit while a direction key is
-            // held down, because the two reads do not always report on the same frame)
-            // would latch _jumpCutApplied for the rest of the jump. The visible symptom
-            // was a jump that looked dead whenever a direction key was held.
-            if (!_jumpCutApplied && vy > 0f)
+            // Only the case where the key is actually released counts. This used to also
+            // latch on every step of the rise, which meant one frame where the key read as
+            // released would cut a jump in half; that is why it now clears the flag only
+            // on a real release and never otherwise.
+            if (!_jumpCutApplied && vy > 0f && !_inputProvider.JumpHeld)
             {
-                float sinceJump = Time.time - _jumpStartTime;
-
-                if (sinceJump > jumpCutWindow)
-                {
-                    // Past the window: stop watching the key for the rest of this jump.
-                    _jumpCutApplied = true;
-                }
-                else if (!_inputProvider.JumpHeld)
-                {
-                    vy *= jumpCutMultiplier;
-                    _jumpCutApplied = true;
-                }
+                vy *= jumpCutMultiplier;
+                _jumpCutApplied = true;
             }
 
             float g = _gravity;
@@ -563,6 +653,14 @@ namespace DuckKing.Player
             }
 
             _rb.velocity = new Vector2(_rb.velocity.x, vy);
+
+            if (debugGround && _moveLogTimer == 0f)
+            {
+                Debug.Log(
+                    $"[Vert] {name} vy={vy:F2} rbVx={_rb.velocity.x:F2} rbVy={_rb.velocity.y:F2} " +
+                    $"bodyType={_rb.bodyType} constraints={_rb.constraints} " +
+                    $"interp={_rb.interpolation} sleeping={_rb.IsSleeping()}", this);
+            }
         }
 
         /// <summary>

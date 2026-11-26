@@ -1,0 +1,42 @@
+3.74s SESSION scene=SampleScene master=0.50 listeners=1 musicVol=1.00 sfxVol=1.00 muteAll=False
+3.74s BUTTONS scene=SampleScene count=3
+4.13s LIVE scene=SampleScene sources=11 playing=1 peak=0.000 musicVol=1.00 sfxVol=1.00
+4.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.001 musicVol=1.00 sfxVol=1.00
+5.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.033 musicVol=1.00 sfxVol=1.00
+5.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.036 musicVol=1.00 sfxVol=1.00
+6.12s CLICK button=SettingsButton
+6.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.073 musicVol=1.00 sfxVol=1.00
+6.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.022 musicVol=1.00 sfxVol=1.00
+7.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.011 musicVol=0.60 sfxVol=1.00
+7.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.000 musicVol=0.00 sfxVol=1.00
+8.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.042 musicVol=0.85 sfxVol=1.00
+8.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.014 musicVol=0.85 sfxVol=1.00
+9.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.012 musicVol=0.85 sfxVol=0.97
+9.80s LIVE scene=SampleScene sources=11 playing=1 peak=0.012 musicVol=0.85 sfxVol=0.42
+10.14s CLICK button=BackButton
+10.30s LIVE scene=SampleScene sources=11 playing=1 peak=0.036 musicVol=0.85 sfxVol=0.42
+10.80s LIVE scene=SampleScene sources=11 playing=2 peak=0.042 musicVol=0.85 sfxVol=0.42
+11.31s LIVE scene=SampleScene sources=11 playing=2 peak=0.044 musicVol=0.85 sfxVol=0.42
+11.81s LIVE scene=SampleScene sources=11 playing=1 peak=0.043 musicVol=0.85 sfxVol=0.42
+12.31s LIVE scene=SampleScene sources=11 playing=1 peak=0.092 musicVol=0.85 sfxVol=0.42
+12.40s CLICK button=SettingsButton
+12.81s LIVE scene=SampleScene sources=11 playing=1 peak=0.044 musicVol=0.85 sfxVol=0.42
+13.31s LIVE scene=SampleScene sources=11 playing=1 peak=0.083 musicVol=0.85 sfxVol=0.00
+13.67s CLICK button=BackButton
+13.81s LIVE scene=SampleScene sources=11 playing=1 peak=0.086 musicVol=0.85 sfxVol=0.00
+14.32s LIVE scene=SampleScene sources=11 playing=1 peak=0.095 musicVol=0.85 sfxVol=0.00
+14.72s CLICK button=SettingsButton
+14.82s LIVE scene=SampleScene sources=11 playing=1 peak=0.066 musicVol=0.85 sfxVol=0.00
+15.32s LIVE scene=SampleScene sources=11 playing=1 peak=0.080 musicVol=0.85 sfxVol=0.00
+15.82s LIVE scene=SampleScene sources=11 playing=1 peak=0.027 musicVol=0.85 sfxVol=0.54
+16.32s LIVE scene=SampleScene sources=11 playing=1 peak=0.081 musicVol=0.85 sfxVol=0.55
+16.36s CLICK button=BackButton
+16.82s LIVE scene=SampleScene sources=11 playing=1 peak=0.045 musicVol=0.85 sfxVol=0.55
+17.32s LIVE scene=SampleScene sources=11 playing=1 peak=0.046 musicVol=0.85 sfxVol=0.55
+17.82s LIVE scene=SampleScene sources=11 playing=1 peak=0.034 musicVol=0.85 sfxVol=0.55
+18.32s LIVE scene=SampleScene sources=11 playing=1 peak=0.068 musicVol=0.85 sfxVol=0.55
+18.83s LIVE scene=SampleScene sources=11 playing=1 peak=0.044 musicVol=0.85 sfxVol=0.55
+19.33s LIVE scene=SampleScene sources=11 playing=1 peak=0.031 musicVol=0.85 sfxVol=0.55
+19.83s LIVE scene=SampleScene sources=11 playing=1 peak=0.041 musicVol=0.85 sfxVol=0.55
+20.33s LIVE scene=SampleScene sources=11 playing=1 peak=0.072 musicVol=0.85 sfxVol=0.55
+20.83s LIVE scene=SampleScene sources=11 playing=1 peak=0.044 musicVol=0.85 sfxVol=0.55

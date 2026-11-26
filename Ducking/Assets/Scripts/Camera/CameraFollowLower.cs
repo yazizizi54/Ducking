@@ -37,6 +37,28 @@ namespace DuckKing.CameraSystem
         [Tooltip("Half the horizontal dead zone; the camera ignores smaller shifts")]
         [SerializeField] private float horizontalDeadZone = 0.0f;
 
+        [Header("Horizontal After Summit")]
+        [Tooltip("Let the camera pan left/right once a duck climbs above the summit height " +
+                 "below. Leave off to keep the single-lane vertical view the whole way up.\n" +
+                 "This is what makes a wide summit area usable: the shaft keeps the camera " +
+                 "locked, the top opens up.")]
+        [SerializeField] private bool followHorizontallyAboveSummit = false;
+
+        [Tooltip("World Y a duck must pass before the camera may pan sideways")]
+        [SerializeField] private float summitHeight = 100f;
+
+        [Tooltip("Tighten the world X limits at this altitude, so the view never shows " +
+                 "past the summit area's own edges.\n" +
+                 "The shaft walls are only 10 units wide, which is narrower than the view " +
+                 "once the camera pans, so the summit needs its own limits.")]
+        [SerializeField] private bool useSummitBounds = true;
+
+        [Tooltip("Leftmost world X the view may reach once the camera pans sideways")]
+        [SerializeField] private float summitMinX = -14f;
+
+        [Tooltip("Rightmost world X the view may reach once the camera pans sideways")]
+        [SerializeField] private float summitMaxX = 14f;
+
         [Header("Zoom")]
         [Tooltip("Orthographic size. Must stay an integer for crisp pixel art: " +
                  "size N shows 2N world units tall at 320x180.")]
@@ -108,6 +130,8 @@ namespace DuckKing.CameraSystem
         private Camera _cam;
 
         private bool _warnedMissingTargets;
+
+        private bool _summitReached;
 
         private bool _warnedPixelPerfect;
         private Component _pixelPerfect;
@@ -217,6 +241,8 @@ namespace DuckKing.CameraSystem
             // Zoom can change at runtime from the tuning panel.
             ApplyZoom();
 
+            UpdateSummitState(lowest);
+
             float desiredY = ClampY(lowest + heightOffset);
 
             if (Mathf.Abs(desiredY - _targetY) > deadZone)
@@ -227,13 +253,16 @@ namespace DuckKing.CameraSystem
             float smoothTime = _targetY > _currentY ? smoothUp : smoothDown;
             _currentY = Mathf.SmoothDamp(_currentY, _targetY, ref _smoothVelocity, smoothTime);
 
-            float desiredX = ClampX(followHorizontally ? GetMidX() : lockedX);
+            float desiredX = ClampX(FollowXRaw());
             if (Mathf.Abs(desiredX - _targetX) > horizontalDeadZone)
             {
                 _targetX = desiredX;
             }
 
-            _currentX = Mathf.SmoothDamp(_currentX, _targetX, ref _smoothVelocityX, smoothHorizontal);
+            float panSmooth = HorizontalFollowActive ? smoothHorizontal : 0f;
+            _currentX = panSmooth > 0f
+                ? Mathf.SmoothDamp(_currentX, _targetX, ref _smoothVelocityX, panSmooth)
+                : _targetX;
 
             // Clamp again after smoothing: SmoothDamp can overshoot past the limit,
             // and an overshoot would briefly reveal the void beyond the world edge.
@@ -540,18 +569,24 @@ namespace DuckKing.CameraSystem
         {
             if (!useWorldBounds) return desiredX;
 
+            // The shaft is only a few units wide; the summit area is much wider than
+            // the view. Swapping the limits here is what lets the camera pan at the
+            // top without ever showing the void beyond the shaft walls on the way up.
+            float minX = UsesSummitBounds ? summitMinX : worldMinX;
+            float maxX = UsesSummitBounds ? summitMaxX : worldMaxX;
+
             if (!clampByViewEdge)
             {
-                return Mathf.Clamp(desiredX, worldMinX, worldMaxX);
+                return Mathf.Clamp(desiredX, minX, maxX);
             }
 
             float half = VisibleHalfWidth;
-            float lo = worldMinX + half;
-            float hi = worldMaxX - half;
+            float lo = minX + half;
+            float hi = maxX - half;
 
             if (lo > hi)
             {
-                return (worldMinX + worldMaxX) * 0.5f;
+                return (minX + maxX) * 0.5f;
             }
 
             return Mathf.Clamp(desiredX, lo, hi);
@@ -645,5 +680,43 @@ namespace DuckKing.CameraSystem
             duckA = a;
             duckB = b;
         }
+
+        // ---- Summit panning ----------------------------------------------------
+
+        /// <summary>
+        /// True when the camera is allowed to move sideways: either the plain
+        /// horizontal follow, or the summit switch once a duck is high enough.
+        /// </summary>
+        public bool HorizontalFollowActive =>
+            followHorizontally || (followHorizontallyAboveSummit && _summitReached);
+
+        /// <summary>
+        /// Latches the summit switch the first time a duck climbs past the threshold.
+        ///
+        /// It latches rather than tracking "is anyone high right now" because the
+        /// camera follows the LOWER duck: when the leader climbs away, the lower duck
+        /// stays behind, and a live check would flip the pan off and back on again.
+        /// </summary>
+        private void UpdateSummitState(float _)
+        {
+            if (!followHorizontallyAboveSummit || _summitReached) return;
+
+            bool highA = duckA != null && duckA.Height >= summitHeight;
+            bool highB = duckB != null && duckB.Height >= summitHeight;
+
+            if (highA || highB) _summitReached = true;
+        }
+
+        /// <summary>Raw horizontal target, before world limits are applied.</summary>
+        private float FollowXRaw()
+        {
+            return HorizontalFollowActive ? GetMidX() : lockedX;
+        }
+
+        /// <summary>
+        /// True while the camera is above the summit and should use the summit's own
+        /// horizontal limits instead of the narrow shaft walls.
+        /// </summary>
+        private bool UsesSummitBounds => _summitReached && useSummitBounds;
     }
 }
