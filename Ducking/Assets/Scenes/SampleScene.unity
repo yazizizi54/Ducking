@@ -915,7 +915,7 @@ Transform:
   m_GameObject: {fileID: 453113160}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -6.01, y: 1.05, z: 0}
+  m_LocalPosition: {x: -6.01, y: 0.42, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6250,7 +6250,6 @@ MonoBehaviour:
   sfxValueText: {fileID: 1518331451}
   fullscreenToggle: {fileID: 503920865}
   backButton: {fileID: 1002432259}
-  resetButton: {fileID: 0}
   menuButton: {fileID: 1253701552}
   menuSceneName: TitleScene
   restoreTimeScaleOnMenu: 1
@@ -6597,7 +6596,7 @@ Transform:
   m_GameObject: {fileID: 1240820886}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 5.34, y: 1.0399894, z: 0}
+  m_LocalPosition: {x: 5.34, y: 0.5, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -69312,6 +69311,3 @@ SceneRoots:
   - {fileID: 1936001004}
   - {fileID: 1936002011}
   - {fileID: 1936002021}
-
-
-
