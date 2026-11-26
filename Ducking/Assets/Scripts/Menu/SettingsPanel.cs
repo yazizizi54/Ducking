@@ -34,7 +34,18 @@ namespace DuckKing.Menu
 
         [Header("Buttons")]
         [SerializeField] private Button backButton;
-        [SerializeField] private Button resetButton;
+
+        [Tooltip("Returns to the title screen. Shown in the in-game settings panel, " +
+                 "where leaving the run is more useful than resetting the sliders.")]
+        [SerializeField] private Button menuButton;
+
+        [Tooltip("Scene loaded by the menu button")]
+        [SerializeField] private string menuSceneName = "TitleScene";
+
+        [Tooltip("Reset the game speed to normal before leaving.\n" +
+                 "The panel pauses the game, and a scene load keeps Time.timeScale, " +
+                 "so without this the title screen would come up frozen.")]
+        [SerializeField] private bool restoreTimeScaleOnMenu = true;
 
         // PlayerPrefs keys, kept short so they are readable in the registry.
         private const string KeyMaster = "duck_master_vol";
@@ -61,7 +72,7 @@ namespace DuckKing.Menu
             _initialized = true;
 
             if (backButton != null) backButton.onClick.AddListener(Close);
-            if (resetButton != null) resetButton.onClick.AddListener(ResetToDefaults);
+            if (menuButton != null) menuButton.onClick.AddListener(ReturnToMenu);
 
             if (masterSlider != null) masterSlider.onValueChanged.AddListener(OnMasterChanged);
             if (musicSlider != null) musicSlider.onValueChanged.AddListener(OnMusicChanged);
@@ -190,16 +201,34 @@ namespace DuckKing.Menu
             Save();
         }
 
-        public void ResetToDefaults()
+        /// <summary>
+        /// Saves the current levels and goes back to the title screen.
+        ///
+        /// The game speed has to be put back here. A settings panel opened during a run
+        /// sets Time.timeScale to zero, and loading a scene does not reset it, so leaving
+        /// without this would drop the player on a frozen title screen. The pause guard
+        /// also restores its own saved value, so both are cleared before the load.
+        /// </summary>
+        public void ReturnToMenu()
         {
-            if (masterSlider != null) masterSlider.value = 1f;
-            if (musicSlider != null) musicSlider.value = 0.8f;
-            if (sfxSlider != null) sfxSlider.value = 1f;
-            if (fullscreenToggle != null) fullscreenToggle.isOn = true;
-
-            AudioListener.volume = 1f;
             Save();
-            NotifyDirector();
+
+            if (restoreTimeScaleOnMenu)
+            {
+                Time.timeScale = 1f;
+            }
+
+            if (string.IsNullOrEmpty(menuSceneName))
+            {
+                Debug.LogWarning("[SettingsPanel] Menu Scene Name is empty; staying in this scene.", this);
+                Close();
+                return;
+            }
+
+            DuckKing.UI.PauseStateGuard.ForceResume();
+
+            if (panelRoot != null) panelRoot.SetActive(false);
+            UnityEngine.SceneManagement.SceneManager.LoadScene(menuSceneName);
         }
 
         // ------------------------------------------------------------------

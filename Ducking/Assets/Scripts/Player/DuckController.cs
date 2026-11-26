@@ -86,16 +86,17 @@ namespace DuckKing.Player
         public float CurrentSpeedY => _rb != null ? _rb.velocity.y : 0f;
 
         [Header("地面检测")]
-        [Tooltip("哪些层算作可站立的地面。\n" +
-                 "注意：另一只鸭子也会被算作地面，两鸭叠在一起时会让 grounded 误判，\n" +
-                 "进而影响土狼时间和短跳判定。代码里已强制排除另一个 DuckController，\n" +
-                 "这一项只管真正的场景地面。")]
+        [Tooltip("哪些层算作可站立的地面")]
         [SerializeField] private LayerMask groundLayers = ~0;
         [Tooltip("地面检测点相对脚底的偏移")]
         [SerializeField] private Vector2 groundCheckOffset = new Vector2(0f, -0.02f);
         [Tooltip("地面检测宽度缩放，略小于角色宽度避免卡墙")]
         [Range(0.1f, 1f)]
         [SerializeField] private float groundCheckWidth = 0.85f;
+
+        [Tooltip("允许站在另一只鸭子头顶起跳。\n" +
+                 "关掉后另一只鸭子只算障碍物，不算地面，跳上去会滑下来、也借不到起跳。")]
+        [SerializeField] private bool canStandOnPartner = true;
 
         private Rigidbody2D _rb;
 
@@ -510,16 +511,37 @@ namespace DuckKing.Player
                 if (hit.collider == _collider) continue;
                 if (hit.collider.attachedRigidbody == _rb) continue;
 
-                // The other duck is not ground. groundLayers is "everything" by default,
-                // and another player is a solid collider, so standing beside or brushing
-                // past it used to report grounded while actually airborne. That kept the
-                // coyote timer topped up and let the short-hop test run on jumps that had
-                // already left the ground, which is what made the jump key feel dead
-                // after walking into the partner.
-                if (hit.collider.GetComponentInParent<DuckController>() != null) continue;
+                // The other duck counts as ground only when this duck is actually coming
+            // down onto it. groundLayers is "everything" by default, and the partner is
+            // a solid collider, so brushing past it at the same height used to report
+            // grounded while genuinely airborne: the coyote timer stayed topped up and
+            // the short-hop test ran on jumps that had already left the ground, which
+            // made the jump key feel dead after walking into the partner.
+            //
+            // Standing on the partner's head is a different case and has to work: some
+            // level sections need one duck to boost the other. A face-down cast that
+            // lands on the partner is real support, so it is allowed; only side
+            // contacts are ignored. Coming down onto the head also needs the relative
+            // speed to be closing, otherwise the duck would stick to a partner that is
+            // climbing past it.
+            if (hit.collider.GetComponentInParent<DuckController>() != null)
+            {
+                if (!canStandOnPartner) continue;
 
-                _isGrounded = true;
-                break;
+                // A cast stopped by a vertical face means this duck is beside the
+                // partner, not on top of it. A head is a flat surface, so its normal
+                // points straight up.
+                if (hit.normal.y < 0.7f) continue;
+
+                if (hit.rigidbody != null && _rb != null)
+                {
+                    float closingSpeed = _rb.velocity.y - hit.rigidbody.velocity.y;
+                    if (closingSpeed > 0.5f) continue;
+                }
+            }
+
+            _isGrounded = true;
+            break;
             }
 
             if (debugGround)

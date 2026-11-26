@@ -126,6 +126,25 @@ namespace DuckKing.UI
             if (debugLog) Debug.Log($"[Pause] resumed at {Time.timeScale:F2}.");
         }
 
+        /// <summary>
+        /// Clears the paused state and puts the game speed back to normal without
+        /// depending on this component still being alive.
+        ///
+        /// Everything that leaves the level has to call this before the scene load.
+        /// Time.timeScale is global and survives a load, so a title screen loaded while
+        /// the settings panel is up would arrive frozen and nothing on it would animate.
+        /// </summary>
+        public static void ForceResume()
+        {
+            if (Instance != null)
+            {
+                Instance._paused = false;
+                Instance._timeScaleBeforePause = 1f;
+            }
+
+            Time.timeScale = 1f;
+        }
+
         private bool AnyPanelVisible()
         {
             if (pausePanels != null)

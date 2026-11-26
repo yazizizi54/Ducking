@@ -739,8 +739,9 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 4294967295
   groundCheckOffset: {x: 0, y: -0.02}
-  groundCheckWidth: 1
-  debugGround: 1
+  groundCheckWidth: 0.85
+  canStandOnPartner: 1
+  debugGround: 0
   debugVelocity: 0
   debugNudgeUp: 0
   debugNudgeDown: 0
@@ -914,7 +915,7 @@ Transform:
   m_GameObject: {fileID: 453113160}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -6.51, y: 1.05, z: 0}
+  m_LocalPosition: {x: -6.01, y: 1.05, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -2840,7 +2841,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "\u91CD\u7F6E"
+  m_Text: "\u4E3B\u83DC\u5355"
 --- !u!222 &927805974
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -6249,7 +6250,10 @@ MonoBehaviour:
   sfxValueText: {fileID: 1518331451}
   fullscreenToggle: {fileID: 503920865}
   backButton: {fileID: 1002432259}
-  resetButton: {fileID: 1253701552}
+  resetButton: {fileID: 0}
+  menuButton: {fileID: 1253701552}
+  menuSceneName: TitleScene
+  restoreTimeScaleOnMenu: 1
 --- !u!114 &1193776955
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -6418,6 +6422,7 @@ MonoBehaviour:
     m_Bits: 4294967295
   groundCheckOffset: {x: 0, y: -0.02}
   groundCheckWidth: 0.85
+  canStandOnPartner: 1
   debugGround: 0
   debugVelocity: 0
   debugNudgeUp: 0
@@ -6592,7 +6597,7 @@ Transform:
   m_GameObject: {fileID: 1240820886}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -5.62, y: 1.0399894, z: 0}
+  m_LocalPosition: {x: 5.34, y: 1.0399894, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6677,7 +6682,7 @@ GameObject:
   - component: {fileID: 1253701553}
   - component: {fileID: 1253701552}
   m_Layer: 0
-  m_Name: ResetButton
+  m_Name: MenuButton
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -63451,15 +63456,16 @@ MonoBehaviour:
   - "\u4F60\u4EEC\u53D7\u5230\u4E86\u8BC5\u5492\uFF01"
   - "\u4F60\u4EEC\u7684\u8DF3\u8DC3\u952E\u88AB\u8C03\u6362\u4E86\uFF01"
   - "            \u9EC4\u9E2D            \u7EFF\u9E2D\n\u8DF3\u8DC3\uFF1A    \u2191                 
-    W       \n\u79FB\u52A8\uFF1A   AD               \u2190\u2192"
-  - "\u52C7\u6562\u5411\u4E0A\u8DF3\u8DC3\u5427\uFF0C\u593A\u53D6\u4F60\u4EEC\u7684\u5B9D\u85CF\uFF01"
-  delay: 0.6
+    W       \n\u79FB\u52A8\uFF1A   AD               \u2190\u2192\n\u9E2D\u53EB\uFF1A   
+    E                   1"
+  - "\u52C7\u6562\u5411\u4E0A\u8DF3\u8DC3\u5427\uFF0C\u53D6\u5F97\u4F60\u4EEC\u7684\u5B9D\u85CF\uFF01"
+  delay: 0.8
   fadeIn: 0.5
   holdTime: 2.5
   fadeOut: 0.4
-  gapBetweenLines: 0.3
+  gapBetweenLines: 0.4
   font: {fileID: 12800000, guid: 7431e8561722f7a44bfcd964c12ca569, type: 3}
-  fontSize: 65
+  fontSize: 66
   textColor: {r: 1, g: 1, b: 1, a: 1}
   outlineColor: {r: 0, g: 0, b: 0, a: 1}
   outlineDistance: {x: 3, y: -3}
@@ -69306,3 +69312,6 @@ SceneRoots:
   - {fileID: 1936001004}
   - {fileID: 1936002011}
   - {fileID: 1936002021}
+
+
+
