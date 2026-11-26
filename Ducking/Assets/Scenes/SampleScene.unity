@@ -5545,14 +5545,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   lines:
-  - "\u606D\u559C\u767B\u9876"
+  - "\u606D\u559C\u4F60\u4EEC\u767B\u9876\uFF01"
   - 
-  - "\u4E24\u53EA\u9E2D\uFF0C\u4E00\u6761\u8DEF"
-  - "\u8C01\u4E5F\u6CA1\u6709\u677E\u624B"
+  - 
+  - "\u4F60\u4EEC\u5DF2\u7ECF\u627E\u5230\u4E86\u57CB\u85CF\u7684\u5B9D\u85CF"
+  - 
+  - 
+  - "\u5C31\u662F\u4F60\u4EEC\u643A\u624B\u540C\u884C\u8DEF\u4E0A\u6CA1\u6709\u653E\u5F03\u7684\u5BF9\u65B9\uFF01"
+  - 
   - 
   - "\u901A\u5173\u7528\u65F6  {time}"
   - 
-  - "\u611F\u8C22\u6E38\u73A9"
+  - 
+  - "\u611F\u8C22\u4F60\u4EEC\u7684\u6E38\u73A9\uFF01"
   appendFinalTime: 0
   summitImage: {fileID: 21300000, guid: fceba71f356b95a4e90dab5b29e10b13, type: 3}
   summitImageHeightRatio: 0.75
@@ -5564,7 +5569,7 @@ MonoBehaviour:
   summitImageStretch: 1
   startDelay: 0.6
   fadeToBlack: 1
-  scrollDuration: 12
+  scrollDuration: 16
   holdAfterScroll: 1.5
   font: {fileID: 12800000, guid: 7431e8561722f7a44bfcd964c12ca569, type: 3}
   fontSize: 54
@@ -36584,7 +36589,7 @@ MonoBehaviour:
   endingMusic: {fileID: 8300000, guid: 9029e077f55d1c145bfa3019cf000755, type: 3}
   fadeIn: 0.6
   fadeOut: 1.5
-  volumeScale: 1
+  volumeScale: 0.5
   stopLevelMusic: 0
 --- !u!114 &1936004000
 MonoBehaviour:

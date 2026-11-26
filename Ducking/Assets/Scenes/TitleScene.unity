@@ -530,8 +530,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   panelRoot: {fileID: 234806166}
   creditsText: {fileID: 1950710152}
-  creditsBody: "\n--- \u53CC\u9E2D\u6210\u884C---\n\n\u7A0B\u5E8F   Name\n\u7B56\u5212  
-    Your Name\n\u7F8E\u672F   Your Name\n\n--- \u611F\u8C22\u4F60\u7684\u6E38\u73A9
+  creditsBody: "\n--- \u53CC\u9E2D\u6210\u884C---\n\n\u7A0B\u5E8F   \u9648\u6DA6\u54F2\n\u7B56\u5212  
+    \u9648\u6DA6\u54F2 \u5468\u7075\u9896\n\u7F8E\u672F   \u82CF\u5B87\n\n--- \u611F\u8C22\u4F60\u7684\u6E38\u73A9
     ---\n\n"
   backButton: {fileID: 1541161217}
   autoScroll: 0
@@ -4273,6 +4273,7 @@ MonoBehaviour:
   fadeTime: 1.2
   volumeScale: 0.29
   snapWhenSilent: 0
+  debugLog: 0
 --- !u!81 &1936003000
 AudioListener:
   m_ObjectHideFlags: 0
